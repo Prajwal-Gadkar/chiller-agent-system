@@ -1,0 +1,5 @@
+envSettings.json
+appsettings_2.json
+.env
+*.key
+*.pem
