@@ -3,3 +3,4 @@ appsettings_2.json
 .env
 *.key
 *.pem
+data/backups/
