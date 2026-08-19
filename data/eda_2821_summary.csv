@@ -1,0 +1,20 @@
+Column,% Clean Rows,% Flagged Rows,Trustworthy (>95% Clean)?
+Common_Alarm_Status,100.0,0.0,YES
+Compressor_1_Discharge_press,100.0,0.0,YES
+Compressor_1_Fan_speed,100.0,0.0,YES
+Compressor_1_Load,100.0,0.0,YES
+Compressor_1_Suction_press,100.0,0.0,YES
+Compressor_2_Discharge_press,100.0,0.0,YES
+Compressor_2_Fan_speed,100.0,0.0,YES
+Compressor_2_Load,100.0,0.0,YES
+Compressor_2_Suction_press,100.0,0.0,YES
+Condenser_Inlet_Temp,100.0,0.0,YES
+Condenser_Outlet_Temp,100.0,0.0,YES
+Energy_Consumption ValueY,100.0,0.0,YES
+Evaporator_Inlet_Temp,100.0,0.0,YES
+Evaporator_Outlet_Temp,100.0,0.0,YES
+Flow ValueY,100.0,0.0,YES
+KW ValueY,100.0,0.0,YES
+On_Off_Status ValueY,100.0,0.0,YES
+Outlet_temperature ValueY,10.724365004703671,89.27563499529633,NO (High Flagged Rate)
+inlet_temperature ValueY,12.417685794920047,87.58231420507995,NO (High Flagged Rate)
