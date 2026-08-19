@@ -1,0 +1,13 @@
+machineId,combined_rank,chiller_type,n_columns_populated,avg_pct_flagged,has_flow,has_power
+2825,1,type_1,38,7.030435593245332,True,True
+2765,2,type_2,20,3.818390532687945,True,True
+2762,3,type_2,20,4.029484269511651,True,True
+2764,4,type_2,20,4.085103074436262,True,True
+2826,5,type_2,20,4.311949764917485,True,True
+2828,6,type_2,20,4.321416174939258,True,True
+2829,7,type_2,20,4.337193524975545,True,True
+2824,8,type_2,20,4.350577976922995,True,True
+2831,9,type_2,20,4.560446314936943,True,True
+2830,10,type_2,20,4.562024597765227,True,True
+2821,11,type_2,20,4.7625147255267,True,True
+2781,12,type_2,20,4.795342772268644,True,True
