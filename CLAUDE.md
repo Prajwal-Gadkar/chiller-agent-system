@@ -22,10 +22,16 @@ Join key: `machine.machineId = MachineExplorer.MachineId`;
 Filter to chillers: `WHERE machine.machineType = 'Chiller'`
 
 Known count as of last analysis: ~73 chiller-type assets, ~57 had readings in the
-analyzed window, clustering into 3 distinct instrumentation "types" (~13/22/24
-sensor columns each) — types must be discovered fresh from the data (which
-columns each chiller actually populates), never hardcoded, since the fleet may
-have changed.
+analyzed window (June 2026, the current v1 training window). Instrumentation
+clustering on that window (silhouette-selected k, see PROJECT.md) found 2 solid
+types plus 2 likely outlier singleton/near-empty groups, not a clean 3:
+type_2 (25 chillers, ~20 cols), type_3 (29 chillers, ~9 cols), plus a 1-chiller
+"type_1" (~38 cols, unusually well-instrumented) and a 2-chiller "type_4"
+(~2 cols, barely instrumented). type_2/type_3 line up with the "two more-
+instrumented types" Flow→Power was verified on. types must be discovered fresh
+from the data (which columns each chiller actually populates), never
+hardcoded, since the fleet may have changed — treat the numbers above as the
+last-known snapshot, not a fixed constant.
 
 ## CRITICAL data quality findings — trust these, don't re-derive from scratch
 - Raw sensor data contains genuine, confirmed corruption: some readings jump from

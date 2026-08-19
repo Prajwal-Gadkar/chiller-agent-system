@@ -23,6 +23,7 @@ broke along the way, and what's next.
 | `scripts/monthly_coverage.py` | Single aggregate query grouped by month: row count + distinct sensor count per month. Used to see how fleet instrumentation ramped up over time. |
 | `agents/data_validation.py` | **First real agent.** Takes a wide DataFrame, applies a physical sanity-bound check per column (bounds inferred from column-name keywords: temperature, pressure, flow, power/kw, speed, status/fault/alarm → [0,1], hours, setpoint; unmatched columns fall back to a 6σ statistical bound). Never drops/mutates data — adds a `<col>_flagged` boolean companion column per sensor column. Returns a report DataFrame (column, rule, bounds, n_total, n_flagged, pct_flagged). |
 | `scripts/compare_corruption_windows.py` | Pulls two 7-day windows and runs the validation agent's report on both, side by side, to see if corruption is uniform over time or concentrated. |
+| `scripts/cluster_chiller_types.py` | Reads `data/trend_wide.csv`, computes per-`machineId` non-null coverage per sensor column, binarizes to populated/absent (>5% non-null), clusters chillers on that binary pattern with `AgglomerativeClustering`, tries k=2/3/4 and picks the best by silhouette score. Prints per-cluster size + defining columns, saves `data/chiller_types.csv` (machineId, chiller_type, status, Criticality, one bool column per sensor). Read-only, file-based only — no DB access needed since the sensor list is already baked into the wide CSV's columns. |
 
 ## Key data findings (confirmed, trust these)
 
@@ -53,6 +54,28 @@ broke along the way, and what's next.
     (-10 to 5000) being too narrow for facility-level aggregates, not real
     corruption. Left as-is pending your call on the right scale/units for
     these columns.
+- **Chiller instrumentation types, clustered from `data/trend_wide.csv`**
+  (`data/chiller_types.csv`): silhouette score picked **k=4**, not a clean 3:
+  - `type_2`: 25 chillers, ~20.2 columns populated on average — matches
+    CLAUDE.md's "~22 columns" type.
+  - `type_3`: 29 chillers, ~9.0 columns populated — close to CLAUDE.md's
+    "~13 columns" type, a bit lower.
+  - `type_1`: **1 chiller** (machineId 2825), ~38 columns populated — far
+    more instrumented than anything else, looks like an outlier rather than
+    a real third type.
+  - `type_4`: **2 chillers** (machineIds 2833, 2834), ~2 columns populated —
+    almost nothing logs, looks like broken/barely-instrumented units, not a
+    real fourth type.
+  - Silhouette scores across k=2/3/4 were all close (0.826 → 0.839 → 0.852);
+    the bump at k=4 looks driven mainly by isolating the single most-
+    instrumented chiller into its own cluster, a common artifact when one
+    point is a genuine outlier rather than the head of a real cluster.
+  - `type_2`/`type_3` look like the real "two more-instrumented types" that
+    Flow→Power was verified on in CLAUDE.md. **Open question, not yet
+    decided:** whether to treat `type_1`/`type_4` as flagged outliers
+    (e.g. route straight to Tier 3 rolling-average — too few members for a
+    type-level model) rather than legitimate types, before this feeds the
+    Supervisor's routing logic.
 
 ## Errors encountered and how they were resolved
 
@@ -100,17 +123,19 @@ broke along the way, and what's next.
   bounds are known to be miscalibrated (see findings above).
 - `data/trend_wide.csv` (June 2026, 161,340 rows) is ready to use as the v1
   training dataset.
-- No chiller "type" classification has been done yet (CLAUDE.md expects 3
-  instrumentation types based on which columns each chiller populates) —
-  this hasn't been derived from the data yet, it's still an open step.
+- Chiller instrumentation types have been clustered from that data
+  (`data/chiller_types.csv`) — see findings above. Result is 2 solid types
+  + 2 likely-outlier groups, not a clean 3. **Not yet decided** how the
+  Supervisor should treat the 2 outlier groups (type_1: 1 chiller, type_4:
+  2 chillers) — this blocks finalizing the Supervisor's routing logic.
 
 ## Next steps (per CLAUDE.md's build order)
 
-1. Decide on the flagged-power-column bound fix (tighten per-column, or
+1. Decide how to treat `type_1`/`type_4` outlier clusters (see open question
+   above) before wiring them into Supervisor routing.
+2. Decide on the flagged-power-column bound fix (tighten per-column, or
    leave the flag for the consuming step to interpret) — was left open as a
    question, not yet answered.
-2. Derive the 3 chiller instrumentation types from `data/trend_wide.csv`
-   (cluster by which columns are populated) — not started.
 3. **Supervisor** — routes by chiller type + reliability tier. Not started.
 4. **Forecast Agent** — Flow→Power prediction, 3-tier reliability cascade
    (per-chiller → type-level → rolling-average fallback), per-chiller only,
