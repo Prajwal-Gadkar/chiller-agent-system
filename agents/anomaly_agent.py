@@ -42,23 +42,38 @@ def find_sensor_column(df: pd.DataFrame, sensor_type: str) -> Optional[str]:
     """Find the best populated column for a given sensor type (flow, kw, inlet, outlet, comp)."""
     exact_candidates = {
         "flow": ["Flow ValueY", "CHW FLOW RATE (m3/h)", "Flow"],
-        "kw": ["KW ValueY", "CH-1, POWER CONSUMPTION (KW)", "KW", "power"],
+        "kw": ["KW ValueY", "CH-1, POWER CONSUMPTION (KW)", "Running_KW_Active_Power ValueY", "KW", "power"],
         "inlet": ["inlet_temperature ValueY", "Evaporator_Inlet_Temp", "inlet_temperature", "CHW RETURN TEMPERATURE (DEG C)"],
         "outlet": ["Outlet_temperature ValueY", "Evaporator_Outlet_Temp", "Outlet_temperature", "CHW LEAVE TEMPERATURE (DEG C)"],
         "comp": ["Compressor_1_Load ValueY", "Compressor_1_Load", "CompressorLoad", "CompLoad"]
     }
 
     candidates = exact_candidates.get(sensor_type, [])
+
+    # Step 1: Exact candidate match first
+    for cand in candidates:
+        for col in df.columns:
+            col_lower = col.lower()
+            if "commit" in col_lower or "committed" in col_lower:
+                continue
+            if sensor_type == "kw" and ("ikw" in col_lower or "kwh" in col_lower):
+                continue
+            if sensor_type in ["inlet", "outlet"] and "condenser" in col_lower:
+                continue
+            if col_lower == cand.lower() and df[col].notna().sum() > 30:
+                return col
+
+    # Step 2: Substring match fallback
     for col in df.columns:
-        if any(c.lower() == col.lower() or c.lower() in col.lower() for c in candidates):
-            # Check if column has non-null data
+        col_lower = col.lower()
+        if "commit" in col_lower or "committed" in col_lower:
+            continue
+        if sensor_type == "kw" and ("ikw" in col_lower or "kwh" in col_lower):
+            continue
+        if sensor_type in ["inlet", "outlet"] and "condenser" in col_lower:
+            continue
+        if any(c.lower() in col_lower for c in candidates):
             if df[col].notna().sum() > 30:
-                # Exclude composite/wrong metrics like ikW/TR, KWH, Condenser
-                col_lower = col.lower()
-                if sensor_type == "kw" and ("ikw" in col_lower or "kwh" in col_lower):
-                    continue
-                if sensor_type in ["inlet", "outlet"] and "condenser" in col_lower:
-                    continue
                 return col
 
     return None

@@ -21,12 +21,12 @@ METADATA_COLUMNS = {"machineId", "timestamp", "status", "Criticality"}
 BOUND_RULES = [
     (["status", "alarm", "fault", "trip"], 0.0, 1.0, "duty_cycle_status"),
     (["percent", "%", "deviation", "load", "performance"], -10.0, 110.0, "percentage"),
+    (["hours", "runhours"], 0.0, 200000.0, "cumulative_hours"),
     (["temperature", "temp", "wet bulb", "cwet"], -20.0, 60.0, "temperature"),
     (["pressure", "press"], -50.0, 500.0, "pressure"),
     (["flow"], -10.0, 5000.0, "flow"),
     (["speed"], -10.0, 110.0, "speed_pct"),
     (["kw", "power", "ikw"], -10.0, 5000.0, "power"),
-    (["hours"], 0.0, 200000.0, "cumulative_hours"),
     (["setpoint"], -20.0, 60.0, "setpoint_temperature"),
 ]
 
@@ -36,8 +36,10 @@ STATISTICAL_FALLBACK_SIGMA = 6
 def infer_bounds(column_name):
     """Return (min, max, rule_label) for a column name, or a statistical fallback."""
     name_lower = column_name.lower()
+    # Replace 'compressor' with 'comp' to prevent 'press' inside 'compressor' from matching pressure rule
+    name_check = name_lower.replace("compressor", "comp")
     for keywords, lo, hi, label in BOUND_RULES:
-        if any(kw in name_lower for kw in keywords):
+        if any(kw in name_check for kw in keywords):
             return lo, hi, label
     return None, None, "statistical_fallback"
 

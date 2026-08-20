@@ -31,7 +31,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from agents.data_validation import validate
-from agents.anomaly_agent import AnomalyAgent, MODEL_SAVE_DIR, find_sensor_column
+from agents.anomaly_agent import AnomalyAgent, MODEL_SAVE_DIR
 
 load_dotenv()
 
@@ -73,6 +73,43 @@ def get_anomaly_agent(chiller_id: int) -> AnomalyAgent:
     if chiller_id not in _MODEL_CACHE:
         _MODEL_CACHE[chiller_id] = AnomalyAgent.load(chiller_id, save_dir=MODEL_SAVE_DIR)
     return _MODEL_CACHE[chiller_id]
+
+
+def find_sensor_col_single_row(df: pd.DataFrame, sensor_type: str) -> Optional[str]:
+    """Find sensor column for single-row DataFrame without strict sample count requirements."""
+    exact_candidates = {
+        "flow": ["Flow ValueY", "CHW FLOW RATE (m3/h)", "Flow", "CONDENSER FLOW (m3/h)"],
+        "kw": ["KW ValueY", "CH-1, POWER CONSUMPTION (KW)", "Running_KW_Active_Power ValueY", "KW", "power", "POWER (KW)"],
+        "inlet": ["inlet_temperature ValueY", "Evaporator_Inlet_Temp", "inlet_temperature", "CHW RETURN TEMPERATURE (DEG C)"],
+        "outlet": ["Outlet_temperature ValueY", "Evaporator_Outlet_Temp", "Outlet_temperature", "CHW LEAVE TEMPERATURE (DEG C)"],
+        "comp": ["Compressor_1_Load ValueY", "Compressor_1_Load", "CompressorLoad", "CompLoad"]
+    }
+    candidates = exact_candidates.get(sensor_type, [])
+    # 1. Exact case-insensitive candidate match
+    for candidate in candidates:
+        for col in df.columns:
+            col_lower = col.lower()
+            if "commit" in col_lower or "committed" in col_lower:
+                continue
+            if sensor_type == "kw" and ("ikw" in col_lower or "kwh" in col_lower):
+                continue
+            if sensor_type in ["inlet", "outlet"] and "condenser" in col_lower:
+                continue
+            if col.lower() == candidate.lower() and df[col].notna().any():
+                return col
+    # 2. Substring match
+    for col in df.columns:
+        col_lower = col.lower()
+        if "commit" in col_lower or "committed" in col_lower:
+            continue
+        if sensor_type == "kw" and ("ikw" in col_lower or "kwh" in col_lower):
+            continue
+        if sensor_type in ["inlet", "outlet"] and "condenser" in col_lower:
+            continue
+        for kw in candidates:
+            if kw.lower() in col_lower and df[col].notna().any():
+                return col
+    return None
 
 
 # --- 2. Node: validate_reading ---
@@ -125,18 +162,16 @@ def check_anomaly(state: PipelineState) -> Dict[str, Any]:
             }
         }
 
-    # Ensure df contains required columns specified in agent's col_map
+    # Ensure required target columns in agent.col_map are populated in df
     for stype, col_name in agent.col_map.items():
-        if col_name and col_name not in df.columns:
-            matched_col = find_sensor_column(df, stype)
+        if col_name and (col_name not in df.columns or df[col_name].isna().all()):
+            matched_col = find_sensor_col_single_row(df, stype)
             if matched_col and matched_col in df.columns:
                 df[col_name] = df[matched_col]
-            else:
-                df[col_name] = np.nan
 
-    # Ensure required feature names are present
+    # Ensure required feature columns are populated
     for fname in agent.feature_names:
-        if fname not in df.columns:
+        if fname not in df.columns or df[fname].isna().all():
             if fname == "DeltaT":
                 inlet = agent.col_map.get("inlet")
                 outlet = agent.col_map.get("outlet")
@@ -151,7 +186,11 @@ def check_anomaly(state: PipelineState) -> Dict[str, Any]:
                 else:
                     df["Thermal_Load"] = np.nan
             else:
-                df[fname] = np.nan
+                matched_col = find_sensor_col_single_row(df, fname)
+                if matched_col and matched_col in df.columns:
+                    df[fname] = df[matched_col]
+                else:
+                    df[fname] = np.nan
 
     detected_df = agent.detect_anomalies(df)
 
@@ -185,7 +224,7 @@ def route_after_anomaly(state: PipelineState) -> str:
 
 # --- 5. Node: generate_insight (Placeholder) ---
 def generate_insight(state: PipelineState) -> Dict[str, Any]:
-    """Placeholder NLG node for formatting an operational insight string when an anomaly occurs."""
+    """Placeholder NLG node formatting operational insight string when an anomaly occurs."""
     c_id = state.get("chiller_id")
     ts = state.get("timestamp", "")
     anom_res = state.get("anomaly_result", {})
@@ -264,19 +303,6 @@ def fetch_recent_readings_from_db(chiller_ids: List[int], limit_per_chiller: int
             user=os.environ["APPDB_USER"],
             password=os.environ["APPDB_PASSWORD"]
         )
-        chiller_tuple = tuple(chiller_ids)
-        query_sensors = """
-            SELECT me."MachineId" as machine_id, me."Id" as sensor_id, me."SeriesDescription" as series_desc
-            FROM "MachineExplorer" me
-            JOIN machine m ON m."machineId" = me."MachineId"
-            WHERE m."machineId" IN %s AND me."SeriesDescription" IS NOT NULL
-        """
-        sensors_df = pd.read_sql_query(query_sensors, app_conn, params=(chiller_tuple,))
-        app_conn.close()
-
-        if sensors_df.empty:
-            return []
-
         ts_conn = psycopg2.connect(
             host=os.environ["TIMESCALE_HOST"],
             port=os.environ["TIMESCALE_PORT"],
@@ -284,32 +310,51 @@ def fetch_recent_readings_from_db(chiller_ids: List[int], limit_per_chiller: int
             user=os.environ["TIMESCALE_USER"],
             password=os.environ["TIMESCALE_PASSWORD"]
         )
-        sensor_ids = tuple(sensors_df["sensor_id"].tolist())
-        query_readings = """
-            SELECT ("timestamp" AT TIME ZONE 'Asia/Calcutta') AS timestamp, machineexplorerid, value
-            FROM trendseriesmeterdata
-            WHERE machineexplorerid IN %s
-            ORDER BY timestamp DESC
-            LIMIT 5000
-        """
-        readings_df = pd.read_sql_query(query_readings, ts_conn, params=(sensor_ids,))
-        ts_conn.close()
-
-        if readings_df.empty:
-            return []
-
-        merged = readings_df.merge(sensors_df, left_on="machineexplorerid", right_on="sensor_id")
-        merged["timestamp"] = pd.to_datetime(merged["timestamp"]).dt.round("15min")
 
         results = []
         for c_id in chiller_ids:
-            c_df = merged[merged["machine_id"] == c_id]
-            if c_df.empty:
+            query_sensors = """
+                SELECT me."MachineId" as machine_id, me."Id" as sensor_id, me."SeriesDescription" as series_desc
+                FROM "MachineExplorer" me
+                JOIN machine m ON m."machineId" = me."MachineId"
+                WHERE m."machineId" = %s AND me."SeriesDescription" IS NOT NULL
+            """
+            sensors_df = pd.read_sql_query(query_sensors, app_conn, params=(c_id,))
+            if sensors_df.empty:
                 continue
-            timestamps = c_df["timestamp"].drop_duplicates().head(limit_per_chiller).tolist()
-            for ts in timestamps:
-                ts_df = c_df[c_df["timestamp"] == ts]
-                raw_reading = ts_df.set_index("series_desc")["value"].to_dict()
+
+            kw_sensor = sensors_df[sensors_df["series_desc"].str.contains("KW|power|temp|flow", case=False, na=False)]
+            target_sensor_id = int(kw_sensor["sensor_id"].iloc[0]) if not kw_sensor.empty else int(sensors_df["sensor_id"].iloc[0])
+
+            query_ts = """
+                SELECT ("timestamp" AT TIME ZONE 'Asia/Calcutta') AS timestamp
+                FROM trendseriesmeterdata
+                WHERE machineexplorerid = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """
+            ts_df = pd.read_sql_query(query_ts, ts_conn, params=(target_sensor_id, limit_per_chiller))
+            if ts_df.empty:
+                continue
+
+            timestamps = tuple(ts_df["timestamp"].tolist())
+            sensor_ids = tuple([int(sid) for sid in sensors_df["sensor_id"].tolist()])
+
+            query_readings = """
+                SELECT ("timestamp" AT TIME ZONE 'Asia/Calcutta') AS timestamp, machineexplorerid, value
+                FROM trendseriesmeterdata
+                WHERE machineexplorerid IN %s AND ("timestamp" AT TIME ZONE 'Asia/Calcutta') IN %s
+            """
+            readings_df = pd.read_sql_query(query_readings, ts_conn, params=(sensor_ids, timestamps))
+            if readings_df.empty:
+                continue
+
+            merged = readings_df.merge(sensors_df, left_on="machineexplorerid", right_on="sensor_id")
+            merged["timestamp"] = pd.to_datetime(merged["timestamp"]).dt.round("15min")
+
+            for ts in sorted(merged["timestamp"].drop_duplicates().tolist()):
+                ts_df_sub = merged[merged["timestamp"] == ts]
+                raw_reading = ts_df_sub.set_index("series_desc")["value"].to_dict()
                 raw_reading["machineId"] = c_id
                 raw_reading["timestamp"] = str(ts)
                 results.append({
@@ -317,6 +362,9 @@ def fetch_recent_readings_from_db(chiller_ids: List[int], limit_per_chiller: int
                     "timestamp": str(ts),
                     "raw_reading": raw_reading
                 })
+
+        app_conn.close()
+        ts_conn.close()
         return results
 
     except Exception as e:
