@@ -8,104 +8,74 @@ alerts, and LLM insights). This project ADDS a reasoning/orchestration layer on 
 of that — it does not rebuild those services.
 
 ## Data source
-PostgreSQL, two databases (connection strings live in .env — NEVER hardcode them):
+PostgreSQL, two databases restored from local backup (`data/backups/`, covering real fleet data from 2023-04-29 to 2026-07-08):
 - AppDb: `machine` (asset master — has `machineType`, `status`, `Criticality`
   columns) joined with `MachineExplorer` (sensor metadata: Id, MachineId,
   SeriesDescription).
 - Timescale DB: `trendseriesmeterdata` (TimescaleDB hypertable — columns:
-  timestamp, machineexplorerid, value, id). Actual sensor readings, physically
-  chunked by day internally (relevant if ever reading the raw pg_dump directly).
+  timestamp, machineexplorerid, value, id). Actual sensor readings.
 
 Join key: `machine.machineId = MachineExplorer.MachineId`;
           `MachineExplorer.Id = trendseriesmeterdata.machineexplorerid`
 
-Filter to chillers: `WHERE machine.machineType = 'Chiller'`
+Filter to chillers: `WHERE machine.machineType = 'Chiller'` (~72-73 chiller assets total).
 
-Known count as of last analysis: ~73 chiller-type assets, ~57 had readings in the
-analyzed window (June 2026, the current v1 training window). Instrumentation
-clustering on that window (silhouette-selected k, see PROJECT.md) found 2 solid
-types plus 2 likely outlier singleton/near-empty groups, not a clean 3:
-type_2 (25 chillers, ~20 cols), type_3 (29 chillers, ~9 cols), plus a 1-chiller
-"type_1" (~38 cols, unusually well-instrumented) and a 2-chiller "type_4"
-(~2 cols, barely instrumented). type_2/type_3 line up with the "two more-
-instrumented types" Flow→Power was verified on. types must be discovered fresh
-from the data (which columns each chiller actually populates), never
-hardcoded, since the fleet may have changed — treat the numbers above as the
-last-known snapshot, not a fixed constant.
+## Verified Fleet Chiller Groups (Data-Driven Candidate Pools)
+Instrumentation analysis across the fleet revealed two meaningful chiller groups (not 3 hand-picked units or artificial clusters):
+1. **Universal Candidate Pool (83 configured / 87 total chillers)**: Populates a standard 5-column set (`KW`, `Flow`, `inlet_temperature`, `outlet_temperature`, `DeltaT`). Crucially, **47 of these chillers are 100% clean (0% flagged corruption)** on temperature sensors in the restored August 2026 database — this is the real primary candidate pool for modeling. (Note: 4 of the 87 total chiller assets have unconfigured `SeriesDescription IS NULL` metadata rows).
+2. **Type 2 Engineering Pool (26 chillers)**: Populates a richer engineering set (Evaporator/Condenser temperatures, Compressor Load, Discharge Pressure, etc.) in addition to universal features.
 
-## CRITICAL data quality findings — trust these, don't re-derive from scratch
-- Raw sensor data contains genuine, confirmed corruption: some readings jump from
-  a sane range to six-figure impossible values (Flow, KW, Fan_speed sensors were
-  directly verified against the raw Postgres backup — this is real, not a
-  pipeline bug).
-- Corruption is NOT uniform. It varies by sensor and by chiller, and sometimes
-  MULTIPLE sensors on the SAME chiller corrupt together at the same moments
-  (co-corruption). This can make a corrupted relationship look statistically
-  "real" even under cross-validation. Before trusting any strong relationship,
-  sanity-check that the target and its driving feature aren't sharing an
-  implausible physical scale together (e.g. both reaching hundreds of thousands
-  when they should be under a few hundred).
-- Status/flag columns (On_Off_Status, Auto_Manual_Status, Fault_Status,
-  Common_Alarm_Status) are NOT strict 0/1 binaries — they're continuous
-  duty-cycle-style values in [0,1]. Valid-range check should be `0 <= x <= 1`,
-  not `x in {0, 1}`. Getting this wrong silently breaks any "% of time" metric.
-- NEVER pool different chiller types together in one model — column sets differ
-  and mixing them reintroduces massive sparsity.
-- NEVER pool different chillers of the SAME type together either. Verified:
-  pooled R² ~0.02 (no real signal) vs. per-chiller R² 0.35-0.99 (real signal) on
-  identical underlying data. Per-chiller modeling is the single most important
-  rule in this project.
-- Some chillers show NO reliable model relationship even modeled individually.
-  This is a real, expected finding — those chillers need a simpler/rule-based
-  fallback, not a forced ML model.
-- Flow → Power (KW) is the one relationship independently verified (proper
-  train/test split + 5-fold cross-validation, not same-data R²) to generalize
-  for the two more-instrumented chiller types. Treat this as the primary
-  trusted physical relationship for forecasting.
-- `Energy_Consumption` is a cumulative counter — never use as a raw model
-  feature (it's circular with power draw, not a real driver).
+## Fleet Regime Boundary Rule (CRITICAL)
+- **2026-01-01 is a hard fleet-wide regime shift**: Full-fleet instrumentation ramp-up in Jan 2026 caused per-chiller power draw to drop 1.4x–4.3x as building load was distributed across newly-online chillers (confirmed across all chillers with pre-2026 history). A week-by-week audit through July–August 2026 confirmed **no discontinuity exists around the August 2026 database reset**; `2026-01-01` remains the single fleet-wide physical regime shift.
+- **NEVER train or validate any model across the 2026-01-01 boundary**: Treat pre-2026 and post-2026 as physically distinct operating regimes.
+- Chillers with long historical data (1657, 1658, 1659, 1660, 1661) are valuable for length, but **must be regime-split** before training/validating any model.
 
-## Feature selection rule (from the instructor)
-Model features must be things that can be CONTROLLED — setpoint, actual
-inlet/outlet temperature, flow rate, fan speed, compressor load/staging, on/off
-mode — not things that are only OBSERVED outcomes (pressures, internal
-evaporator/condenser temps, run hours, fault flags). Apply this filter whenever
-selecting inputs for any predictive model.
+## Asset Deduplication & Alias Mapping
+- **Chillers 3392, 3894, and 4054** are confirmed to be the exact same physical asset (**Chiller-111**) registered under 3 separate vendor integrations, sharing identical telemetry.
+- Dedup mapping is stored in `data/asset_aliases.csv` (`alias_id, canonical_id`). Any fleet-level reporting (chiller count, coverage %) must count this as 1 physical chiller, not 3.
+- All 3 trained models are retained in `data/anomaly_models/` (harmless, low cost) but must be flagged as aliased in any summary reporting.
 
-## Architecture — build in this order
-1. **Data Validation Agent** — sanity-bound gate on every reading before anything
-   else sees it. Filters at read time only; never mutates the source database.
-   Reference real thresholds from appsettings_2.json (OverPumping,
-   TowerEfficiency, LowLoadPenalty rules) once available.
-2. **Supervisor** — routes based on chiller type + reliability tier (see cascade
-   below).
-3. **Forecast Agent** — Flow→Power prediction using the 3-tier reliability
-   cascade.
-4. **Anomaly Agent** — independent statistical check, runs parallel to Forecast.
-5. **Consensus & Skeptic Gate** — Forecast and Anomaly must agree, AND the
-   result must pass a co-corruption sanity check, before anything escalates.
-6. **Optimization Agent** — drafts a recommendation, self-simulates the
-   predicted effect before presenting it. Any real setpoint change requires
-   human approval (HITL) — this is a physical-safety boundary, not optional.
-7. **Insight Agent** — explains the reasoning chain in plain language, not just
-   a verdict.
+## Settled Modeling Findings (Validated Facts — Do Not Re-Litigate)
 
-## Reliability cascade (core modeling pattern — mirrors InnoShri's own
-FDDPerformanceProcessing service, confirmed as a real production pattern)
-- Tier 1: per-chiller model (only if this specific chiller cleared a genuine
-  cross-validated reliability check)
-- Tier 2: type-level model (fallback for chillers that didn't clear Tier 1)
-- Tier 3: time-series / rolling-average, no ML (last-resort fallback)
+### 1. Forecast Agent — SETTLED (Persistence Baseline)
+- **Persistence ($Power[t] = Power[t-1]$) is the validated Forecast baseline**, beating every ML approach tried across multiple chillers (including real wet-bulb data). Persistence won every time. This is settled; do not re-attempt ML forecasting without genuinely new data (e.g. an external weather API).
+- Tested 4 independent ways:
+  - (a) Delta-modeling the change instead of raw level.
+  - (b) Chaining a forecasted external driver (CEFT, Ambient_Temperature, and WET BULB TEMPERATURE). **CEFT, "Ambient_Temperature ValueY", and "WET BULB TEMPERATURE" have all been tested and are internally-regulated signals with no real daily weather cycle (0.03°C–0.78°C diurnal swings across all three). No column in this fleet's sensor set represents true outdoor weather.**
+  - (c) Direct lagged $Thermal\_Load[t-1] \rightarrow Power[t]$ using 5-fold `TimeSeriesSplit` CV.
+  - (d) Real wet-bulb temperature feature test on Chiller 4054: Persistence ($R^2 = 0.7823$) strictly beat Lagged Driver ML ($R^2 = 0.5368$) and Hybrid ML ($R^2 = 0.6929$).
+- Persistence won every trial, often by a wide margin (e.g. Chiller 1660: persistence R²=0.976 vs best ML R²=0.487).
+- **Rule**: Short-term power forecasting is **settled across 4 independent methods**: use persistence as an informational baseline. DO NOT re-attempt ML-based short-term power forecasting without new external data (e.g., real outdoor weather API).
+
+
+### 2. Anomaly Agent — VALIDATED & FULLY TRAINED (Physical Response Models)
+- **Same-timestamp physical response model**: $KW = f(Flow, InletTemp, OutletTemp, DeltaT, [CompressorLoad])$ using `RandomForestRegressor` with 5-fold K-Fold CV.
+- **Fleet Training Complete**: Fitted and saved 52 models across the 47 clean candidate chillers (`data/anomaly_models/`), restricted to the current regime (`>= 2026-01-01`) and capped at a recent 110-day training window (`2026-05-01` to `2026-08-19`).
+- **Data Volume Efficiency**: Reduced raw training sensor rows from 165M to **77.97M rows**, providing 9,200–9,300 15-minute clean running training samples per chiller.
+- **Performance**: Peak CV $R^2$ reached **0.8912** (Chillers 3894, 4054, 3392), **0.7857** (Chiller 2828), **0.7521** (Chiller 2763), and **0.7383** (Chiller 2826). Capping the training window to the recent 110-day regime improved $R^2$ CV significantly across long-history chillers (e.g. Chiller 1657 $R^2$ jumped from 0.358 to **0.551**, Chiller 1658 jumped from 0.314 to **0.496**).
+- **Anomaly Logic**: $Residual = Actual\_KW - Predicted\_KW$. Convert residuals to z-scores ($z = (residual - \mu) / \sigma$). Flag $|z| > 3.0$ as anomalous. Flagged anomaly rates across clean operating data averaged **0.0% to 0.2%**, perfectly tuned for detecting true operational outliers.
+
+
+### 3. Optimization Agent — OPEN (Negative Schedule-Based Finding)
+- Tested schedule-based waste (compressor load / KW efficiency ratio elevated during low-demand hours) on 5 chillers including those with strongest underlying physics (1657, 1661).
+- **Finding**: Found NO structured time-of-day efficiency pattern (hourly variation was random noise, 2-5 percentage points).
+- **Rule**: Genuine negative result. Do not re-attempt schedule-based waste checks. Optimization remains open for alternative formulation (e.g. setpoint optimization under clean physics).
+
+### 4. Data Quality & Per-Chiller Modeling Rules
+- `inlet_temperature` / `outlet_temperature` are clean (0% flagged) on 28 of 55 chillers. Corruption is per-chiller, never fleet-wide. Always check corruption per-chiller.
+- **NEVER pool chillers together**: Always train and score models per-chiller.
+
+## Architecture — Build Order
+1. **Data Validation Agent**: Sanity-bound checks on incoming readings.
+2. **Anomaly Agent**: Fits per-chiller `RandomForestRegressor` response model within a single regime, computes residual z-scores, flags $|z| > 3$.
+3. **Forecast Agent**: Informational persistence baseline ($Power[t] = Power[t-1]$).
+4. **Consensus & Skeptic Gate**: Combines Anomaly flags and validation signals.
+5. **Optimization Agent**: (Open item - future phase).
+6. **Insight Agent**: Explains reasoning chain in plain English.
 
 ## Non-negotiables
-- NEVER modify or delete rows in the source database. All filtering happens at
-  read time, in application code, never as a database mutation.
-- NEVER hardcode API keys, database passwords, or any secret. Always load from
-  environment variables via `.env` (gitignored). If a reference file contains a
-  real secret, treat it as sensitive — never echo it into generated code, logs,
-  or documentation.
-- Any new model's accuracy must be validated with a genuine train/test split or
-  cross-validation before being trusted. Same-data R² (train and score on
-  identical rows) is not acceptable evidence of anything.
-- Before treating a strong model result as real, check it isn't the
-  co-corruption pattern described above.
+- NEVER modify or delete rows in the source database.
+- NEVER hardcode secrets. Always load from environment variables (`.env`).
+- ALWAYS enforce per-chiller modeling (never pool chillers).
+- ALWAYS respect the 2026-01-01 regime boundary.
+

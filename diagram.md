@@ -1,58 +1,54 @@
 Diagram 1: The main per-reading pipeline
 Step 0 — Per-chiller memory (the starting context, read before anything else)
 
-Before any reasoning happens, the system pulls up what it already knows about this specific chiller — not generic knowledge, but accumulated, chiller-specific history: which sensors on this unit tend to corrupt (we found this varies wildly — some chillers had clean On_Off_Status, others had 15%+ corruption in Common_Alarm_Status), what a technician previously told the system about a past alert ("checked, was a false alarm"), and a running confidence score for how much to trust this chiller's own model versus falling back to the type-level one. This isn't a separate "step" in the flow so much as a lookup that colors everything downstream — think of it as the system's institutional memory for this one piece of equipment.
+Before any reasoning happens, the system pulls up what it already knows about this specific chiller — accumulated, chiller-specific history: sensor corruption profiles (e.g. clean temperature sensors vs corrupted status flags), past technician feedback, and baseline model performance. This per-chiller context informs all downstream evaluation steps.
 
 Step 1 — Data Validation Agent
 
-Input: the raw incoming sensor reading(s) for this chiller at this timestamp.
-What it does: applies the sanity-bound check we built in Section 5c — is KW, Flow, or any other reading within a physically plausible range for this kind of equipment? This is the gate that catches the exact problem we spent hours chasing: a Compressor_2_Fan_speed reading of 977,735, or a KW reading in the hundreds of thousands. Crucially, it checks readings individually, not just in aggregate — a single corrupted value shouldn't taint an otherwise-clean reading cycle.
-Output: each incoming value gets tagged either "trustworthy" or "flagged as implausible," and that tag travels with the data into every downstream step. Nothing gets silently dropped — everything downstream knows what it's working with.
+Input: raw incoming sensor reading(s) for this chiller at a given timestamp.
+What it does: applies physical sanity bounds (KW, Flow, Inlet/Outlet Temp, DeltaT, Speed, Status). Tags each column as trustworthy or flagged as implausible. Filtering happens strictly at read time without mutating source databases.
+Output: validated reading with per-sensor validity flags.
 
 Step 2 — Supervisor
 
-Input: the validated (and tagged) reading, plus whatever per-chiller memory said about this unit's trust level.
-What it does: decides how to route this reading through the rest of the pipeline. This is where the reliability-gate logic from Section 5 lives — if this chiller is one of the ones that cleared our cross-validated reliability bar (real R² of 0.5–0.99), the Supervisor routes it toward the full analytical path with confidence. If this chiller is more like Type 1 (6 of 8 chillers had no reliable relationship), the Supervisor still routes it through the same boxes, but flags the whole request as "low confidence" — meaning downstream agents should apply more caution, and the Consensus & Skeptic Gate (Step 4) should hold a much higher bar before letting anything through.
-Output: the reading, tagged with a routing confidence level, dispatched in parallel to both Forecast and Anomaly.
+Input: validated reading + per-chiller metadata/memory.
+What it does: orchestrates execution across pipeline agents for this chiller. Verifies regime boundaries (must operate within a single regime, e.g. post-2026-01-01) and passes validated readings to the Anomaly Agent and informational Forecast baseline.
+Output: reading dispatched to Anomaly Agent and Forecast baseline.
 
-Step 3a — Forecast Agent (runs in parallel with 3b)
+Step 3a — Forecast Agent (Informational Persistence Baseline)
 
-Input: current and recent Flow, plus other controllable features (from the instructor's "predict from things you can control" guidance).
-What it does: predicts expected power draw a few intervals ahead — not just "what should power be right now," but "what should it be in the near future given how flow is trending." This is a direct extension of the one relationship we proved generalizes under real cross-validation (not the false 0.998 we caught and threw out) — Flow genuinely drives Power for Types 2 and 3.
-Output: a predicted power value (with a confidence interval, not just a point estimate) for the next few intervals.
+Input: current and recent power readings for this chiller.
+What it does: provides a short-term persistence baseline ($Power[t] = Power[t-1]$). Extensive empirical validation showed persistence consistently outperforms ML approaches (delta modeling, driver chaining, lagged load models). Used for context and reference only.
+Output: persistence baseline power estimate.
 
-Step 3b — Anomaly Agent (runs in parallel with 3a)
+Step 3b — Anomaly Agent (The Validated Foundation)
 
-Input: the current actual reading, plus this chiller's historical baseline behavior.
-What it does: independently checks whether the current reading is statistically unusual — this is a different question from Forecast's "what will happen next." Anomaly asks "is what's happening right now already outside normal bounds," using a method resistant to the outlier corruption we've documented (something like Isolation Forest, per the real InnoShri AnomalyDetetcionService pattern).
-Output: an anomaly flag with its own independent confidence score.
+Input: current validated physical sensors ($Flow, InletTemp, OutletTemp, DeltaT, [CompLoad]$).
+What it does: evaluates a per-chiller `RandomForestRegressor` response model ($KW = f(Flow, InletTemp, OutletTemp, DeltaT, [CompLoad])$), trained strictly within a single regime. Computes actual minus predicted power residual and calculates its z-score ($z = (residual - \mu) / \sigma$). Flags $|z| > 3$ as anomalous.
+Output: anomaly flag, residual z-score, and predicted vs actual power delta.
 
 Step 4 — Consensus & Skeptic Gate
 
-Input: Forecast's prediction, Anomaly's flag, and the validation tags from Step 1.
-What it does two things, both must pass:
+Input: Anomaly Agent output, Forecast baseline, and Data Validation flags.
+What it does: checks if physical anomalies align across sensors and filters co-corruption artifacts (e.g. simultaneous sensor spikes). Ensures anomalies represent real physical deviations rather than sensor failure.
+Output: cleared anomaly report with attached confidence and reasoning.
 
-Consensus check — do Forecast and Anomaly actually agree something's worth escalating? If Forecast says "power is tracking exactly as flow predicts" but Anomaly says "this looks unusual," that disagreement itself is informative — it likely means the anomaly isn't really about power/flow physics at all (maybe it's a different sensor acting up), so the gate holds rather than passing a shaky signal forward.
-Skeptic check — even if they agree, re-verify: is this the co-corruption pattern from Section 5c (multiple sensors on the same chiller spiking together, which fooled us once already)? Is this chiller currently low-confidence per the Supervisor's routing? Did a technician already dismiss this exact pattern before (checked against memory)?
+Step 5a — Optimization Agent (Open Item — Not Yet Built)
 
-Output: either "cleared — proceed to action" or "held — not enough confidence to act," with the reasoning for that decision attached (this reasoning is what Insight will later explain in plain English).
+Input: cleared anomaly report.
+What it does: (Open item / future phase). Initial schedule-based waste hypothesis was tested across 5 chillers and showed no structured time-of-day efficiency pattern (noise). Future optimization will focus on physics-based setpoint tuning once validated.
+Output: pending future implementation.
 
-Step 5a — Optimization Agent (runs only if Step 4 cleared)
+Step 5b — Insight Agent
 
-Input: the cleared signal, plus context on what kind of situation this is (efficiency drift, incipient fault, etc.).
-What it does: drafts a specific recommendation (e.g. "flow rate is elevated relative to load — check for a stuck valve," or a proactive setpoint suggestion). Before finalizing it, it runs a quick internal What-If simulation on its own suggestion — does the predicted outcome of this specific recommendation actually look like an improvement, checked against the same Forecast relationship, before presenting it as advice.
-Output: a vetted recommendation, plus (for real setpoint changes) a request for human approval before execution.
+Input: validation flags, anomaly residuals, and consensus gate findings.
+What it does: synthesizes technical results into plain English narratives (e.g., explaining why a power reading was flagged as anomalous relative to flow and delta-T physics).
+Output: structured human-readable insight summary.
 
-Step 5b — Insight Agent (runs in parallel with 5a)
+Step 6 — Final Output
 
-Input: everything that happened in Steps 1–4 (and 5a's recommendation, if there is one).
-What it does: synthesizes the whole reasoning chain into plain English — not just "power is high," but "flow rose 20%, forecast expected power to rise proportionally, actual power matched that, so this tracks known physics rather than a fault" (or the opposite, if the gate held). It also checks alert history for this chiller — the 5th alert this week reads differently (more urgent, less repetitive) than the 1st.
-Output: a human-readable narrative, tagged with appropriate urgency.
+Combines consensus gate findings and Insight Agent narratives into system alerts, dashboard updates, or operational reports.
 
-Step 6 — Combined output
-
-Input: Optimization's recommendation (if any) and Insight's narrative.
-What it does: assembles both into whatever the actual deliverable is — dashboard update, report entry, or (in a fuller build) an actual ticket via equipment_health_router.
 
 Step 7 — Feedback loop back to memory
 

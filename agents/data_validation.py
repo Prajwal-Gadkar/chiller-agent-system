@@ -54,6 +54,7 @@ def validate(df):
     """
     flagged_df = df.copy()
     report_rows = []
+    new_cols = {}
 
     value_columns = [
         c
@@ -72,7 +73,7 @@ def validate(df):
             hi = mean + STATISTICAL_FALLBACK_SIGMA * std
 
         flagged = ((series < lo) | (series > hi)).fillna(False)
-        flagged_df[f"{col}_flagged"] = flagged
+        new_cols[f"{col}_flagged"] = flagged.values
 
         n_total = series.notna().sum()
         n_flagged = int(flagged.sum())
@@ -90,8 +91,14 @@ def validate(df):
             }
         )
 
+    if new_cols:
+        flagged_cols_df = pd.DataFrame(new_cols, index=df.index)
+        flagged_df = pd.concat([df.copy(), flagged_cols_df], axis=1)
+
     report_df = pd.DataFrame(report_rows).sort_values("pct_flagged", ascending=False).reset_index(drop=True)
     return flagged_df, report_df
+
+
 
 
 def main():

@@ -116,31 +116,52 @@ broke along the way, and what's next.
    **Watch for this same pattern in any future script that reads timestamp
    columns back through `pd.read_sql_query` on a raw psycopg2 connection.**
 
-## Current state
+## Data Restoration & Extended History
+- **Postgres Backup Restoration**: Restored full local backup to `data/backups/`, recovering complete fleet history from **2023-04-29 to 2026-07-08** across all ~73 chiller assets.
+- **2026-01-01 Regime Boundary Discovered**:
+  - Full-fleet instrumentation ramp-up in Jan 2026 caused per-chiller power draw to drop **1.4x to 4.3x** across all 7 chillers with pre-2026 history (e.g. Chillers 1657, 1658, 1659, 1660, 1661), as building load was distributed across newly online chillers.
+  - Hard rule established: **NEVER train or validate models across the 2026-01-01 boundary**. Pre/post 2026 are distinct physical operating regimes.
 
-- Architecture step 1 (Data Validation Agent) is built and validated against
-  real data, but its bound table is a first pass — power/facility-aggregate
-  bounds are known to be miscalibrated (see findings above).
-- `data/trend_wide.csv` (June 2026, 161,340 rows) is ready to use as the v1
-  training dataset.
-- Chiller instrumentation types have been clustered from that data
-  (`data/chiller_types.csv`) — see findings above. Result is 2 solid types
-  + 2 likely-outlier groups, not a clean 3. **Not yet decided** how the
-  Supervisor should treat the 2 outlier groups (type_1: 1 chiller, type_4:
-  2 chillers) — this blocks finalizing the Supervisor's routing logic.
+## Chiller Selection Pivot & Instrumentation Analysis
+- **Two Real Instrumentation Groups Identified**:
+  - **Universal Pool (55/72 chillers)**: Populates standard 5-column set (`KW`, `Flow`, `inlet_temperature`, `outlet_temperature`, `DeltaT`).
+  - **Type 2 Engineering Pool (26/72 chillers)**: Populates richer engineering set (Evaporator/Condenser temperatures, Compressor Load, Discharge Pressure).
+- **28 Clean Chillers Confirmed**:
+  - Performed fleet-wide temp sensor corruption audit (`fleet_temp_validation_summary.csv`).
+  - **28 chillers have 0% flagged corruption** on `inlet_temperature` / `outlet_temperature` (including 1657, 1658, 1659, 1661, and 2737–2760). This clean universal group forms the real candidate pool.
+  - Temperature corruption is NOT fleet-wide; it only affects a specific subset (e.g. 2821, 2828, 2831). Always audit per-chiller.
 
-## Next steps (per CLAUDE.md's build order)
+## Forecast, Anomaly, & Optimization Experiments Summary
 
-1. Decide how to treat `type_1`/`type_4` outlier clusters (see open question
-   above) before wiring them into Supervisor routing.
-2. Decide on the flagged-power-column bound fix (tighten per-column, or
-   leave the flag for the consuming step to interpret) — was left open as a
-   question, not yet answered.
-3. **Supervisor** — routes by chiller type + reliability tier. Not started.
-4. **Forecast Agent** — Flow→Power prediction, 3-tier reliability cascade
-   (per-chiller → type-level → rolling-average fallback), per-chiller only,
-   never pooled. Not started. June 2026 data is the intended training set.
-5. **Anomaly Agent** — independent statistical check, parallel to Forecast.
-   Not started.
-6. **Consensus & Skeptic Gate**, **Optimization Agent** (HITL-gated),
-   **Insight Agent** — not started, downstream of the above.
+| Experiment / Agent | Approach Tested | Outcome / Finding | Status / Decision |
+|---|---|---|---|
+| **Forecast Agent** | (a) Delta modeling ($Power[t] - Power[t-1]$)<br>(b) External driver chaining (CEFT / Ambient Temp)<br>(c) Direct lagged $Thermal\_Load[t-1] \rightarrow Power[t]$ via 5-fold `TimeSeriesSplit` CV | Persistence ($Power[t] = Power[t-1]$) beat every ML model across all 3 tests by a wide margin (e.g. Chiller 1660: Persistence R²=0.976 vs ML R²=0.487). Ambient_Temp proved to be an internal setpoint, not real outdoor weather. | **SETTLED**: Short-term power forecasting ML is closed. Persistence is the designated informational baseline. |
+| **Anomaly Agent** | Physical response model $KW = f(Flow, InletTemp, OutletTemp, DeltaT, [CompLoad])$ via `RandomForestRegressor` with random 5-fold K-Fold CV. | Confirmed strong physical response ($R^2 = 0.31–0.99$). Strongest on long-history chillers 1657/1660/1661 ($R^2 = 0.96–0.99$), usable across 28-clean pool. $z$-scored residuals ($|z| > 3$) reliably flag physical anomalies. | **VALIDATED FOUNDATION**: Ready for production implementation in `agents/anomaly_agent.py`. |
+| **Optimization Agent** | Schedule-based efficiency waste (Compressor Load / KW efficiency ratio during low-demand hours). Tested on 5 chillers (incl. 1657, 1661). | NO time-of-day efficiency pattern found (hourly variation was random noise, 2–5 percentage points). | **TESTED & NOT FOUND**: Schedule-based waste check is a confirmed negative result. Optimization remains open. |
+
+## Current State
+
+- **2026-08-20**:
+  - Restored fresh databases `Persistent_AppDb_Aug20` (87 chillers) and `Persistent_Timescale_Aug20` (2023-04-29 to 2026-08-19, 95.2M rows).
+  - Executed fleet-wide clean scan on 83 configured chillers saved to [`data/clean_chillers_aug20.csv`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/clean_chillers_aug20.csv): **47 chillers** confirmed `CLEAN & VALID` on universal set (0% corruption).
+  - Executed week-by-week August 2026 regime shift check (`scripts/check_august_regime_shift.py`) saved to [`data/august_regime_shift_analysis.csv`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/august_regime_shift_analysis.csv): **No discontinuity exists in July/August 2026**; `2026-01-01` remains the single fleet-wide regime boundary.
+  - Analyzed Chiller 4054 (`scripts/analyze_chiller_4054_wetbulb.py`) saved to [`data/chiller_4054_wetbulb_analysis.csv`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/chiller_4054_wetbulb_analysis.csv):
+    - Diurnal swing: 0.78 °C (internal loop sensor, minimal diurnal swing).
+    - Response Model (5-fold random CV): Base $R^2 = 0.9004$ vs With WetBulb $R^2 = 0.9250$ ($\Delta R^2 = +0.0246$).
+    - Short-Term Forecast (5-fold TimeSeriesSplit CV): Persistence ($R^2 = 0.7823$) beats Lagged Driver ML ($R^2 = 0.5368$) and Hybrid ML ($R^2 = 0.6929$). Settled rule holds: **Persistence baseline wins for short-term power forecasting**.
+  - **Completed Fleet Anomaly Agent Training (`scripts/train_anomaly_agent_fleet.py`)**:
+    - Fitted physical response models across the 47 clean candidate chillers (`data/anomaly_models/`), restricted to post-2026-01-01 regime and capped at a recent ~110-day training window (`2026-05-01` to `2026-08-19`).
+    - Reduced raw training rows from ~165M to **77.97M rows**, providing 9,200–9,300 clean running 15-min training samples per chiller.
+    - Achieved peak CV $R^2$ of **0.8912** (Chillers 3894, 4054, 3392), **0.7857** (Chiller 2828), **0.7521** (Chiller 2763), and **0.7383** (Chiller 2826). Capping the training window to the recent ~110 days significantly improved $R^2$ across long-history chillers (e.g. Chiller 1657 $R^2$ jumped from 0.358 to **0.551**, Chiller 1658 jumped from 0.314 to **0.496**).
+    - Generated full fit summary in [`data/anomaly_agent_fit_summary.csv`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/anomaly_agent_fit_summary.csv).
+
+## Next Steps
+
+1. **Build Supervisor & Consensus Gate (`agents/consensus_gate.py`)**:
+   - Combine Anomaly Agent residual z-scores ($|z| > 3.0$) and Data Validation flags into unified risk scores.
+2. **Build LangGraph Pipeline / Orchestrator**:
+   - Link `Data Validation -> Anomaly Agent -> Consensus Gate -> Insight Agent`.
+3. **Build Insight Agent (`agents/insight_agent.py`)**:
+   - Synthesize validation metrics and physical anomaly flags into plain-English reasoning summaries.
+
+

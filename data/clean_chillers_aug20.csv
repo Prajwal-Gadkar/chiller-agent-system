@@ -1,0 +1,88 @@
+machineId,n_rows,has_kw,has_flow,has_inlet,has_outlet,kw_flag_pct,flow_flag_pct,inlet_flag_pct,outlet_flag_pct,status
+1657,20906,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+1658,20907,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+1659,20906,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+1660,20906,True,True,True,True,0.0,9.609681431168084,9.930163589400172,9.930163589400172,CORRUPTED / HIGH_FLAGS
+1661,20906,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2711,0,False,False,False,False,,,,,NO_SENSORS_CONFIGURED
+2712,0,False,False,False,False,,,,,NO_SENSORS_CONFIGURED
+2715,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2716,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2717,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2718,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2723,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2724,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2725,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2726,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2737,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2738,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2739,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2740,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2741,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2742,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2743,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2744,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2745,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2746,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2747,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2748,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2749,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2750,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2751,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2752,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2753,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2754,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2755,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2756,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2757,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2758,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2759,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2760,20885,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2761,21254,True,True,True,True,85.86549062844543,0.0,0.7374066270829343,0.723041562918981,CORRUPTED / HIGH_FLAGS
+2762,21246,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2763,21226,True,True,True,True,0.0,0.005538631957906397,0.0,0.0,CLEAN & VALID
+2764,21217,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2765,21215,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2781,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2782,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2783,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2784,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2785,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2801,21141,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2802,21140,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2804,21139,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2805,21137,True,True,True,True,0.3926450871480559,0.0,0.0,0.0,CLEAN & VALID
+2821,21137,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2822,21137,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2823,21133,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2824,21130,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2825,21130,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2826,21130,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2827,21128,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2828,21128,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2829,21128,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2830,21128,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2831,20884,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2832,20884,True,True,True,True,91.66009685775424,0.0,0.0,0.0,CORRUPTED / HIGH_FLAGS
+2833,20884,True,False,False,False,0.3926450871480559,,,,INCOMPLETE_UNIVERSAL_SET
+2834,70,False,False,False,False,,,,,INCOMPLETE_UNIVERSAL_SET
+2835,6388,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2836,6388,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+2837,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2838,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+2839,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3227,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3228,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3279,0,False,False,False,False,,,,,NO_SENSORS_CONFIGURED
+3280,0,False,False,False,False,,,,,NO_SENSORS_CONFIGURED
+3392,4752,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+3732,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3784,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3823,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3842,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+3894,4752,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+4053,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+4054,4752,True,True,True,True,0.0,0.0,0.0,0.0,CLEAN & VALID
+4055,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+4056,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
+4057,0,False,False,False,False,,,,,NO_DATA_IN_WINDOW
