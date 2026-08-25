@@ -1,0 +1,169 @@
+{
+  "schema_version": "1.0",
+  "last_updated": "2026-08-25T10:04:32.798211Z",
+  "description": "Live, agent-editable chiller knowledge store. Read and updated in real time by the Data Validation Agent (and maintenance jobs) via knowledge_store.py. The 'static_reference' block is a condensed mirror of chiller_knowledge_base.md for fast in-context lookup; edit it only via a deliberate maintenance pass, not per-reading. 'validation_rules', 'chiller_type_registry', 'cluster_registry', and 'learned_patterns' are the parts meant to change at runtime.",
+  "static_reference": {
+    "use_case_categories": [
+      "Comfort Cooling (HVAC)",
+      "Industrial Process Cooling",
+      "Data Centers",
+      "Medical & Healthcare",
+      "Power Generation",
+      "Specialty / Other"
+    ],
+    "chiller_types": {
+      "heat_rejection_method": [
+        "Air-Cooled",
+        "Water-Cooled"
+      ],
+      "compressor_technology": [
+        "Reciprocating",
+        "Scroll",
+        "Screw",
+        "Centrifugal",
+        "Absorption",
+        "Magnetic Bearing (Oil-Free)"
+      ],
+      "application_mode": [
+        "Process Chiller",
+        "Comfort Chiller"
+      ]
+    },
+    "industries": [
+      "HVAC / Commercial Real Estate",
+      "Pharmaceutical & Biotech",
+      "Food & Beverage",
+      "Chemical & Petrochemical",
+      "Plastics & Injection Molding",
+      "Data Centers",
+      "Healthcare / Hospitals",
+      "Power Generation",
+      "Metalworking & Machining",
+      "Semiconductor / Electronics Manufacturing",
+      "Marine & Offshore"
+    ],
+    "standards": [
+      "AHRI 550/590",
+      "AHRI 551/591",
+      "ASHRAE 90.1",
+      "ASHRAE 15",
+      "ASHRAE 34",
+      "ASHRAE Guideline 3",
+      "Eurovent Certification",
+      "ISO 5151/15042",
+      "ISO 13256",
+      "ISO 14001",
+      "UL/cUL",
+      "CE Marking/PED",
+      "BEE Star Rating",
+      "GB Standards",
+      "Montreal Protocol",
+      "Kigali Amendment",
+      "US EPA Section 608",
+      "US AIM Act",
+      "EU F-Gas Regulation"
+    ],
+    "performance_metrics": [
+      "COP",
+      "EER",
+      "kW/Ton",
+      "IPLV",
+      "NPLV",
+      "Approach Temperature",
+      "Capacity (Tonnage)"
+    ],
+    "refrigerant_classes": [
+      "A1",
+      "A2L",
+      "A3",
+      "B1",
+      "B2/B2L",
+      "B3"
+    ],
+    "generic_operational_parameters": [
+      "CHW supply/return temp",
+      "Condenser water supply/return temp",
+      "Delta-T across evaporator",
+      "Refrigerant suction/discharge pressure",
+      "Superheat/subcooling",
+      "Compressor amp draw/power input",
+      "Oil pressure",
+      "Approach temperature",
+      "Vibration",
+      "Surge conditions (centrifugal)",
+      "Run hours (per compressor)",
+      "Fault/Alarm status",
+      "On/Off & Auto/Manual status",
+      "Fan speed",
+      "Flow rate (chilled & condenser water)"
+    ],
+    "full_reference_doc": "chiller_knowledge_base.md"
+  },
+  "validation_rules": {
+    "sentinel_values": {
+      "description": "Known placeholder/dead values used by BMS/OPC layers. Any reading exactly matching one of these should be treated as a data artifact, not a genuine measurement.",
+      "values": [
+        0,
+        -1,
+        9999,
+        10000,
+        65535,
+        -999
+      ],
+      "note": "Seed list \u2014 refine per data source as real sentinel behavior is confirmed during preprocessing. Use add_learned_pattern() to record new sentinel discoveries, then promote_pattern() once confirmed."
+    },
+    "physical_bounds": {
+      "description": "Hard physical/absolute bounds per parameter category (Layer 1). Empty template \u2014 populate per parameter type as chillers are onboarded, since physical limits depend on refrigerant, capacity, and design.",
+      "temperature_c": {
+        "min": null,
+        "max": null,
+        "note": "e.g. CHW loop typically 1-30C without glycol; set per fleet"
+      },
+      "pressure_bar": {
+        "min": null,
+        "max": null,
+        "note": "bounded by refrigerant P-T chart; set per refrigerant type"
+      },
+      "fan_speed_rpm": {
+        "min": 0,
+        "max": null,
+        "note": "set per fan model spec"
+      },
+      "power_kw": {
+        "min": 0,
+        "max": null,
+        "note": "set per rated chiller capacity"
+      }
+    },
+    "artifact_patterns": {
+      "description": "Confirmed, stable artifact-detection rules. Entries here have been promoted from learned_patterns after being validated. This starts with the generic rule types from the domain design (see chiller_knowledge_base.md Section 2.4) as seed entries \u2014 no fleet-specific findings yet.",
+      "patterns": [
+        {
+          "id": "seed-monotonic-ramp",
+          "pattern": "monotonic_ramp_then_reset",
+          "description": "Value moves consistently in one direction over a sustained run of samples and eventually exceeds the physical bound for its parameter type, then drops back into physical range in one step.",
+          "rule": "Flag the entire ramp window as ONE fault event (not one alert per sample). Treat the single-step drop back into physical range as the recovery point, not a new anomaly.",
+          "status": "seed",
+          "promoted_on": null
+        },
+        {
+          "id": "seed-sentinel-clamp",
+          "pattern": "sentinel_clamp_value",
+          "description": "Value hits an exact round-number ceiling (e.g. 9999, 10000) and stops.",
+          "rule": "Check against validation_rules.sentinel_values before any statistical check. Exact match = artifact, regardless of statistical plausibility.",
+          "status": "seed",
+          "promoted_on": null
+        }
+      ]
+    }
+  },
+  "chiller_inventory": {
+    "description": "Live inventory of every chiller the agent has encountered, keyed by machine_id. This is the equivalent of the old Excel 'Chiller Inventory' + 'Tracked Parameters' sheets, but populated and updated in real time as the agent processes new data. Each entry accumulates: identifying metadata (name, model, manufacturer, location, capacity), the agent's type/industry inference, and a per-parameter record (meaning, unit, observed range, sanity status) that grows as new parameters are seen for that chiller.",
+    "entries": {}
+  },
+  "cluster_registry": {
+    "description": "Populated at runtime by the clustering step. Keyed by cluster ID, contains member machine IDs and per-cluster statistical bounds (Layer 2).",
+    "entries": {}
+  },
+  "learned_patterns": []
+}
