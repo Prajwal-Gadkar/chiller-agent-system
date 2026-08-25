@@ -200,11 +200,31 @@ def check_anomaly(state: PipelineState) -> Dict[str, Any]:
     z_score = detected_df["z_score"].iloc[0]
     is_anom = bool(detected_df["is_anomalous"].iloc[0])
 
+    res_std = float(agent.residual_std) if hasattr(agent, "residual_std") and agent.residual_std > 0 else 1.0
+
+    p_kw = float(pred_kw) if pd.notna(pred_kw) else 0.0
+    act_kw = float(actual_kw) if pd.notna(actual_kw) else 0.0
+    z_val = float(z_score) if pd.notna(z_score) else 0.0
+
+    range_low = max(0.0, p_kw - 2.0 * res_std)
+    range_high = p_kw + 2.0 * res_std
+    safe_range = (round(range_low, 2), round(range_high, 2))
+
+    abs_z = abs(z_val)
+    if abs_z <= 2.0:
+        range_severity = "normal"
+    elif abs_z <= 3.0:
+        range_severity = "elevated"
+    else:
+        range_severity = "critical"
+
     anomaly_res = {
-        "predicted_kw": float(pred_kw) if pd.notna(pred_kw) else 0.0,
-        "actual_kw": float(actual_kw) if pd.notna(actual_kw) else 0.0,
-        "z_score": float(z_score) if pd.notna(z_score) else 0.0,
-        "is_anomaly": is_anom
+        "predicted_kw": p_kw,
+        "actual_kw": act_kw,
+        "z_score": z_val,
+        "is_anomaly": is_anom,
+        "safe_range_kw": safe_range,
+        "range_severity": range_severity
     }
     return {"anomaly_result": anomaly_res}
 
@@ -222,48 +242,37 @@ def route_after_anomaly(state: PipelineState) -> str:
     return "log_normal"
 
 
-# --- 5. Node: generate_insight (Placeholder) ---
-def generate_insight(state: PipelineState) -> Dict[str, Any]:
-    """Placeholder NLG node formatting operational insight string when an anomaly occurs."""
+def _format_insight_string(state: PipelineState) -> str:
+    """Helper to format operational insight text using the range & severity template."""
     c_id = state.get("chiller_id")
-    ts = state.get("timestamp", "")
     anom_res = state.get("anomaly_result", {})
     act = anom_res.get("actual_kw", 0.0)
-    pred = anom_res.get("predicted_kw", 0.0)
-    z = anom_res.get("z_score", 0.0)
+    safe_range = anom_res.get("safe_range_kw", (0.0, 0.0))
+    range_low, range_high = safe_range[0], safe_range[1]
+    severity = anom_res.get("range_severity", "normal")
 
     alias_info = ""
     if c_id in ASSET_ALIASES and ASSET_ALIASES[c_id]["is_aliased"]:
         canon_id = ASSET_ALIASES[c_id]["canonical_id"]
         alias_info = f" [ALIAS of physical asset {ASSET_ALIASES[c_id]['canonical_name']} (canonical ID {canon_id})]"
 
-    text = (
-        f"[ANOMALY DETECTED] Chiller {c_id}{alias_info} at {ts}: "
-        f"actual KW {act:.2f} vs expected {pred:.2f}, z-score {z:.2f}"
+    return (
+        f"Chiller {c_id}{alias_info}: currently drawing {act:.1f} kW. "
+        f"For current operating conditions (Flow, ΔT), normal range is {range_low:.1f}-{range_high:.1f} kW. "
+        f"Status: {severity}."
     )
-    return {"insight_text": text}
+
+
+# --- 5. Node: generate_insight ---
+def generate_insight(state: PipelineState) -> Dict[str, Any]:
+    """Format operational insight string when an anomaly occurs."""
+    return {"insight_text": _format_insight_string(state)}
 
 
 # --- Node: log_normal ---
 def log_normal(state: PipelineState) -> Dict[str, Any]:
     """Node logging normal operational state when no anomaly is detected."""
-    c_id = state.get("chiller_id")
-    ts = state.get("timestamp", "")
-    anom_res = state.get("anomaly_result", {})
-    act = anom_res.get("actual_kw", 0.0)
-    pred = anom_res.get("predicted_kw", 0.0)
-    z = anom_res.get("z_score", 0.0)
-
-    alias_info = ""
-    if c_id in ASSET_ALIASES and ASSET_ALIASES[c_id]["is_aliased"]:
-        canon_id = ASSET_ALIASES[c_id]["canonical_id"]
-        alias_info = f" [ALIAS of physical asset {ASSET_ALIASES[c_id]['canonical_name']} (canonical ID {canon_id})]"
-
-    text = (
-        f"[NORMAL] Chiller {c_id}{alias_info} at {ts}: "
-        f"actual KW {act:.2f} vs expected {pred:.2f}, z-score {z:.2f}"
-    )
-    return {"insight_text": text}
+    return {"insight_text": _format_insight_string(state)}
 
 
 # --- Build & Compile LangGraph Pipeline ---
@@ -441,7 +450,7 @@ def run_test_harness(chiller_ids: List[int] = [4054, 2828, 2821], limit_per_chil
 
         print(f"[{idx:02d}/{len(readings):02d}] Chiller {c_id}{alias_str} | Timestamp: {ts}")
         print(f"     Validation : Valid={is_valid} | Flagged Cols={final_state['validation_result'].get('flagged_columns', [])}")
-        print(f"     Anomaly    : Actual KW={anom_res.get('actual_kw', 0.0):.2f} | Expected={anom_res.get('predicted_kw', 0.0):.2f} | Z-Score={anom_res.get('z_score', 0.0):.2f} | IsAnomaly={is_anom}")
+        print(f"     Anomaly    : Actual KW={anom_res.get('actual_kw', 0.0):.2f} | Expected={anom_res.get('predicted_kw', 0.0):.2f} | Safe Range={anom_res.get('safe_range_kw')} kW | Severity={anom_res.get('range_severity')} | Z-Score={anom_res.get('z_score', 0.0):.2f} | IsAnomaly={is_anom}")
         print(f"     Insight    : {final_state.get('insight_text')}")
         print("-" * 100)
 

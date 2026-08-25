@@ -1,23 +1,11 @@
-"""
-Runner script for Streamlit app with Starlette GZipResponder compatibility patch.
-"""
 import sys
-import starlette.middleware.gzip as gzip_mod
+import streamlit.web.server.starlette.starlette_gzip_middleware as gzip_mw
 
-_orig_init = gzip_mod.GZipResponder.__init__
-
-def _patched_init(self, app, minimum_size, compresslevel=9, *, thread_minimum_size=1024, **kwargs):
-    return _orig_init(
-        self, app, minimum_size,
-        compresslevel=compresslevel,
-        thread_minimum_size=thread_minimum_size,
-        **kwargs
-    )
-
-gzip_mod.GZipResponder.__init__ = _patched_init
+# Patch Streamlit's _MediaAwareGZipResponder for Starlette / Python 3.14 compatibility
+gzip_mw._MediaAwareGZipResponder.__init__ = lambda self, app, minimum_size=500, compresslevel=9, **kwargs: super(gzip_mw._MediaAwareGZipResponder, self).__init__(app, minimum_size=minimum_size, compresslevel=compresslevel, thread_minimum_size=1024)
 
 from streamlit.web.cli import main
 
 if __name__ == "__main__":
-    sys.argv = ["streamlit", "run", "app.py", "--server.port=8501", "--server.headless=true"]
+    sys.argv = ["streamlit", "run", "app.py", "--server.port", "8502"]
     main()

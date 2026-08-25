@@ -265,6 +265,9 @@ class AnomalyAgent:
         residuals = np.full(len(df_out), np.nan)
         z_scores = np.full(len(df_out), np.nan)
         is_anomalous = np.full(len(df_out), False)
+        safe_range_low = np.full(len(df_out), np.nan)
+        safe_range_high = np.full(len(df_out), np.nan)
+        range_severity = np.full(len(df_out), "normal", dtype=object)
 
         if np.any(valid_rows):
             preds = self.model.predict(X_input[valid_rows])
@@ -274,15 +277,27 @@ class AnomalyAgent:
             zs = (res - self.residual_mean) / self.residual_std
             anom = np.abs(zs) > z_threshold
 
+            res_std = self.residual_std if self.residual_std > 0 else 1.0
+            r_low = np.maximum(0.0, preds - 2.0 * res_std)
+            r_high = preds + 2.0 * res_std
+            abs_zs = np.abs(zs)
+            sevs = np.where(abs_zs <= 2.0, "normal", np.where(abs_zs <= 3.0, "elevated", "critical"))
+
             predicted_kw[valid_rows] = preds
             residuals[valid_rows] = res
             z_scores[valid_rows] = zs
             is_anomalous[valid_rows] = anom
+            safe_range_low[valid_rows] = r_low
+            safe_range_high[valid_rows] = r_high
+            range_severity[valid_rows] = sevs
 
         df_out["predicted_KW"] = predicted_kw
         df_out["residual_KW"] = residuals
         df_out["z_score"] = z_scores
         df_out["is_anomalous"] = is_anomalous
+        df_out["safe_range_low_KW"] = safe_range_low
+        df_out["safe_range_high_KW"] = safe_range_high
+        df_out["range_severity"] = range_severity
 
         return df_out
 
