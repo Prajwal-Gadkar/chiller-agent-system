@@ -49,17 +49,31 @@ def pick_best_k(populated):
     return best_k, best_labels, best_score
 
 
+MIN_CLUSTER_SIZE = 5
+
+
 def label_clusters_by_size(populated, raw_labels):
-    """Relabel clusters as type_1, type_2, ... ordered by descending avg columns populated (mirrors CLAUDE.md's ~13/22/24 ordering)."""
+    """Relabel clusters as type_1, type_2, ... ordered by descending avg columns populated.
+    Clusters with fewer than MIN_CLUSTER_SIZE (5) members are assigned 'unclustered_outlier'."""
     n_populated_per_chiller = populated.sum(axis=1)
+    
+    # Calculate counts and avg columns per raw cluster
+    cluster_counts = pd.Series(raw_labels).value_counts()
+    valid_raw_clusters = cluster_counts[cluster_counts >= MIN_CLUSTER_SIZE].index
+    
     cluster_avg_columns = (
         pd.Series(n_populated_per_chiller.values, index=raw_labels)
         .groupby(level=0)
         .mean()
-        .sort_values(ascending=False)
     )
-    raw_to_name = {raw: f"type_{i + 1}" for i, raw in enumerate(cluster_avg_columns.index)}
-    return pd.Series(raw_labels, index=populated.index).map(raw_to_name)
+    
+    # Sort valid clusters by avg columns descending
+    sorted_valid = cluster_avg_columns.loc[valid_raw_clusters].sort_values(ascending=False)
+    raw_to_name = {raw: f"type_{i + 1}" for i, raw in enumerate(sorted_valid.index)}
+    
+    # Map raw labels, defaulting to 'unclustered_outlier' for small clusters
+    labels_series = pd.Series(raw_labels, index=populated.index)
+    return labels_series.map(lambda r: raw_to_name.get(r, "unclustered_outlier"))
 
 
 def summarize_clusters(populated, chiller_types, sensor_cols):

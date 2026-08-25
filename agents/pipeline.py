@@ -115,18 +115,28 @@ def find_sensor_col_single_row(df: pd.DataFrame, sensor_type: str) -> Optional[s
 # --- 2. Node: validate_reading ---
 def validate_reading(state: PipelineState) -> Dict[str, Any]:
     """
-    Wrap data validation logic for a single incoming reading.
-    Applies generous physical bounds to numeric sensor columns.
+    Wrap artifact-aware data validation logic for a single incoming reading.
+    Applies sentinel detection, monotonic ramp-reset tracking, physical bounds,
+    and Layer-2 statistical bounds.
     """
     raw_reading = state.get("raw_reading", {})
     df = pd.DataFrame([raw_reading])
 
-    flagged_df, report_df = validate(df)
+    annotated_df, report_df = validate(df)
 
     flagged_cols = []
-    for c in flagged_df.columns:
-        if c.endswith("_flagged") and bool(flagged_df[c].iloc[0]):
-            flagged_cols.append(c[:-8])
+    artifacts_detected = {}
+    for c in df.columns:
+        art_type_col = f"{c}_artifact_type"
+        if art_type_col in annotated_df.columns:
+            art_type = annotated_df[art_type_col].iloc[0]
+            if art_type != "none":
+                flagged_cols.append(c)
+                artifacts_detected[c] = {
+                    "artifact_type": art_type,
+                    "fault_window_id": annotated_df[f"{c}_fault_window_id"].iloc[0],
+                    "evidence": annotated_df[f"{c}_evidence"].iloc[0],
+                }
 
     is_valid = (len(flagged_cols) == 0)
     report = report_df.to_dict(orient="records") if not report_df.empty else []
@@ -134,6 +144,7 @@ def validate_reading(state: PipelineState) -> Dict[str, Any]:
     validation_res = {
         "is_valid": is_valid,
         "flagged_columns": flagged_cols,
+        "artifacts_detected": artifacts_detected,
         "report": report
     }
     return {"validation_result": validation_res}
@@ -451,7 +462,8 @@ def run_test_harness(chiller_ids: List[int] = [4054, 2828, 2821], limit_per_chil
         print(f"[{idx:02d}/{len(readings):02d}] Chiller {c_id}{alias_str} | Timestamp: {ts}")
         print(f"     Validation : Valid={is_valid} | Flagged Cols={final_state['validation_result'].get('flagged_columns', [])}")
         print(f"     Anomaly    : Actual KW={anom_res.get('actual_kw', 0.0):.2f} | Expected={anom_res.get('predicted_kw', 0.0):.2f} | Safe Range={anom_res.get('safe_range_kw')} kW | Severity={anom_res.get('range_severity')} | Z-Score={anom_res.get('z_score', 0.0):.2f} | IsAnomaly={is_anom}")
-        print(f"     Insight    : {final_state.get('insight_text')}")
+        insight_str = str(final_state.get('insight_text', '')).replace('Δ', 'Delta')
+        print(f"     Insight    : {insight_str}")
         print("-" * 100)
 
     print("\n" + "=" * 100)

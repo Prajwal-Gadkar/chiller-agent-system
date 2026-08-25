@@ -195,6 +195,7 @@ def register_chiller(
     industry: Optional[str] = None,
     confidence: Optional[float] = None,
     evidence: Optional[str] = None,
+    aliases: Optional[list[str]] = None,
     path: str = DEFAULT_STORE_PATH,
 ) -> dict:
     """Create or update a chiller's inventory record.
@@ -213,6 +214,7 @@ def register_chiller(
         "name": None, "model_number": None, "manufacturer": None,
         "location": None, "capacity": None, "unit": None, "criticality": None,
         "chiller_type": None, "industry": None, "confidence": None, "evidence": None,
+        "aliases": [],
         "parameters_tracked": {},
     })
 
@@ -220,7 +222,7 @@ def register_chiller(
         "name": name, "model_number": model_number, "manufacturer": manufacturer,
         "location": location, "capacity": capacity, "unit": unit, "criticality": criticality,
         "chiller_type": chiller_type, "industry": industry,
-        "confidence": confidence, "evidence": evidence,
+        "confidence": confidence, "evidence": evidence, "aliases": aliases,
     }
     for k, v in updates.items():
         if v is not None:

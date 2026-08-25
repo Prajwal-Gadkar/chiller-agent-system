@@ -155,13 +155,22 @@ broke along the way, and what's next.
     - Achieved peak CV $R^2$ of **0.8912** (Chillers 3894, 4054, 3392), **0.7857** (Chiller 2828), **0.7521** (Chiller 2763), and **0.7383** (Chiller 2826). Capping the training window to the recent ~110 days significantly improved $R^2$ across long-history chillers (e.g. Chiller 1657 $R^2$ jumped from 0.358 to **0.551**, Chiller 1658 jumped from 0.314 to **0.496**).
     - Generated full fit summary in [`data/anomaly_agent_fit_summary.csv`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/anomaly_agent_fit_summary.csv).
 
+- **2026-08-25 (Data Validation Agent Upgrade & Live Knowledge Store Integration)**:
+  - **Empirical Check Completed (Step 1)**: Verified counter and meter reset artifacts in pre-2026 data for long-history chiller 1657 (`CKT_1_RUN_Hours` reset to 0.0 on 2023-08-12; `KW` reset to 0.0 on 2024-09-22; `Ambient_Temperature` ramp to 731°C resetting to 20.95°C on 2026-04-09) and chiller 2761 (`inlet_temperature` ramp to 89.5°C resetting to 21.2°C; `Outlet_temperature` ramp to 93.6°C resetting to 20.5°C on 2026-01-01). Saved evidence to [`data/reset_evidence.csv`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/reset_evidence.csv) and [`data/reset_evidence.json`](file:///c:/Users/Admin/Documents/chiller-agent-system/chiller-agent-system/data/reset_evidence.json).
+  - **Live Knowledge Base Integration (`scripts/sync_knowledge_base.py`)**: Built onboarding and sync pipeline that reads telemetry data and registers 57 chillers into `chiller_agent_knowledge.json` via `knowledge_store.py`. Handled asset deduplication (mapping Chillers 3392, 3894, and 4054 under canonical asset `3392` / "Chiller-111" with alias array), populates parameter meanings and units for 56 documented parameters, records unknown parameters as active learned patterns for engineering review, and populates Layer-2 cluster statistical bounds.
+  - **Cluster Minimum Size Threshold (`scripts/cluster_chiller_types.py`)**: Implemented 5-chiller minimum size guard. Small clusters (`type_1` with 1 chiller, `type_4` with 2 chillers) route to Tier-3 rolling average fallback and register as `chiller_type="unclustered_outlier"`.
+  - **Data Validation Agent Rewrite (`agents/data_validation.py`)**: Added sentinel value detection (`0` flatline duration, `-1`, `9999`, `10000`, `65535`, `-999`), vectorized monotonic ramp-then-reset detection, Layer-2 cluster statistical bounds, cross-parameter correlation checks, and new companion schema (`<col>_artifact_type`, `<col>_fault_window_id`, `<col>_evidence`).
+  - **Agent Prompt Wiring (`agents/pipeline.py`)**: Wired live `get_agent_context()` bundle directly into agent prompts and pipeline execution.
+  - **Documentation Correction (`CLAUDE.md`)**: Documented pre-2026 misdiagnosis correction (meter resets vs regime boundary) and knowledge-sync pipeline structure.
+
 ## Next Steps
 
-1. **Build Supervisor & Consensus Gate (`agents/consensus_gate.py`)**:
-   - Combine Anomaly Agent residual z-scores ($|z| > 3.0$) and Data Validation flags into unified risk scores.
-2. **Build LangGraph Pipeline / Orchestrator**:
-   - Link `Data Validation -> Anomaly Agent -> Consensus Gate -> Insight Agent`.
+1. **Re-evaluate Pre-2026 Data for Response Models**:
+   - Apply artifact-aware Data Validation Agent on pre-2026 long-history chiller data (1657, 1658, 1659, 1660, 1661) to test if cleaned pre-2026 data can fit distinct pre-2026 regime models.
+2. **Build Supervisor & Consensus Gate (`agents/consensus_gate.py`)**:
+   - Combine Anomaly Agent residual z-scores ($|z| > 3.0$) and Data Validation companion flags into unified risk scores.
 3. **Build Insight Agent (`agents/insight_agent.py`)**:
    - Synthesize validation metrics and physical anomaly flags into plain-English reasoning summaries.
+
 
 

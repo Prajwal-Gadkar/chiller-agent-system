@@ -30,6 +30,29 @@ Instrumentation analysis across the fleet revealed two meaningful chiller groups
 - **NEVER train or validate any model across the 2026-01-01 boundary**: Treat pre-2026 and post-2026 as physically distinct operating regimes.
 - Chillers with long historical data (1657, 1658, 1659, 1660, 1661) are valuable for length, but **must be regime-split** before training/validating any model.
 
+## Correction: Pre-2026 Exclusion Was Partly a Misdiagnosis
+
+- The original decision to restrict modeling to post-2026-01-01 data rested on two
+  findings that were not the same thing, and got conflated:
+  1. **The regime shift (still valid, still confirmed)** — per-chiller power draw
+     dropped 1.4x–4.3x in Jan 2026 as load redistributed across newly-online chillers.
+     Still holds.
+  2. **"Corruption" in pre-2026 data (retracted as originally stated)** — largely
+     undetected meter/counter reset artifacts, not evidence the data is unusable.
+     Confirmed on Chiller 1657 (CKT_1_RUN_Hours reset on 2023-08-12; KW reset on 2024-09-22; Ambient_Temp ramp to 731°C then reset on 2026-04-09) and Chiller 2761 (inlet/outlet temperature ramps to 89.5°C/93.6°C resetting to 21.2°C/20.5°C on 2026-01-01).
+- **Practical implication**: pre-2026 data should not be treated as permanently
+  discarded — re-evaluate once the artifact-aware Data Validation Agent (Step 4) is
+  applied. Still never pool across the 2026-01-01 boundary.
+- **Do not re-litigate the regime boundary itself based on this correction.**
+
+## Live Knowledge Store & Onboarding Sync
+- `chiller_agent_knowledge.json` + `knowledge_store.py` serve as the live knowledge store for the agent system (mirroring `chiller_knowledge_base.md` as the static domain reference).
+- Onboarding sync (`scripts/sync_knowledge_base.py`) runs whenever a client database/telemetry source is processed:
+  1. Registers chillers (`register_chiller`) with type classification, confidence, and deduplicated physical asset alias mappings (Chillers 3392, 3894, 4054 = "Chiller-111").
+  2. Records parameter observations (`record_parameter_observation`) with documented meanings/units for standard parameters, flagging unknown parameters for engineering review.
+  3. Updates cluster membership and Layer-2 statistical bounds (`update_cluster`).
+  4. Context bundle (`get_agent_context()`) is injected directly into agent prompt context.
+
 ## Asset Deduplication & Alias Mapping
 - **Chillers 3392, 3894, and 4054** are confirmed to be the exact same physical asset (**Chiller-111**) registered under 3 separate vendor integrations, sharing identical telemetry.
 - Dedup mapping is stored in `data/asset_aliases.csv` (`alias_id, canonical_id`). Any fleet-level reporting (chiller count, coverage %) must count this as 1 physical chiller, not 3.
