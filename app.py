@@ -234,7 +234,8 @@ page = st.sidebar.radio(
         "⚡ 2. LangGraph Live Pipeline Evaluator",
         "📊 3. Anomaly Models & Residual Metrics",
         "🔍 4. Case Study: Chiller 2825 Event",
-        "📈 5. Architecture & Settled Baseline"
+        "📈 5. Architecture & Settled Baseline",
+        "🧠 6. Live Knowledge Store & Data Validation"
     ]
 )
 
@@ -551,3 +552,88 @@ elif page == "📈 5. Architecture & Settled Baseline":
     - **Single-Point Gate ($|z| > 3.0$)**: Catches acute severe power spikes ($> 3\sigma$).
     - **Sustained Sequence Gate ($\ge 4$ consecutive $|z| > 2.0$)**: Catches multi-hour efficiency degradation (such as Chiller 2825's 18-hour over-consumption event) with a proven **0.0% false positive rate** across 51 clean fleet chillers.
     """)
+
+# ----------------------------------------------------------------------------------------------------
+# PAGE 6: LIVE KNOWLEDGE STORE & DATA VALIDATION
+# ----------------------------------------------------------------------------------------------------
+elif page == "🧠 6. Live Knowledge Store & Data Validation":
+    st.markdown("### 🧠 Live Fleet Knowledge Store & Artifact-Aware Data Validation")
+    st.caption("Live agent-editable JSON knowledge store (`chiller_agent_knowledge.json`) + multi-layer artifact-aware Data Validation Agent.")
+    
+    import knowledge_store
+    from agents.data_validation import validate as validate_data
+    
+    kb_data = knowledge_store.load()
+    inventory = kb_data.get("chiller_inventory", {}).get("entries", {})
+    clusters = kb_data.get("cluster_registry", {}).get("entries", {})
+    learned_patterns = kb_data.get("learned_patterns", [])
+    sentinels = kb_data.get("validation_rules", {}).get("sentinel_values", {}).get("values", [])
+    
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(inventory)}</div><div class='metric-lbl'>Known Physical Chillers</div></div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(clusters)}</div><div class='metric-lbl'>Formed Clusters</div></div>", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(learned_patterns)}</div><div class='metric-lbl'>Active Learned Patterns</div></div>", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(sentinels)}</div><div class='metric-lbl'>Sentinel Values ({sentinels[:3]}...)</div></div>", unsafe_allow_html=True)
+        
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs([
+        "📖 Live Knowledge Store Explorer",
+        "🛡️ Artifact-Aware Data Validation Runner",
+        "📉 Empirical Reset Evidence Gallery"
+    ])
+    
+    with tab1:
+        st.markdown("#### 📖 Live Prompt Context Bundle (`get_agent_context()`)")
+        st.info("This compact bundle is dynamically injected into agent prompts at runtime so agents have live fleet context (chillers known, active learned patterns, sentinel rules).")
+        
+        ctx_str = knowledge_store.get_agent_context()
+        st.code(ctx_str, language="markdown")
+        
+        st.markdown("#### 🏢 Chiller Inventory Registry")
+        inv_rows = []
+        for mid, rec in inventory.items():
+            inv_rows.append({
+                "Machine ID": mid,
+                "Name": rec.get("name"),
+                "Type": rec.get("chiller_type"),
+                "Criticality": rec.get("criticality"),
+                "Industry": rec.get("industry"),
+                "Confidence": rec.get("confidence"),
+                "Aliases": ", ".join(rec.get("aliases", [])) if rec.get("aliases") else "None",
+                "Tracked Parameters": len(rec.get("parameters_tracked", {}))
+            })
+        st.dataframe(pd.DataFrame(inv_rows), use_container_width=True)
+        
+    with tab2:
+        st.markdown("#### 🛡️ Artifact-Aware Data Validation Agent Evaluator")
+        st.caption("Executes `agents/data_validation.py` applying sentinel checks, monotonic ramp-reset tracking, physical bounds, and Layer-2 statistical bounds.")
+        
+        trend_csv = os.path.join(REPO_ROOT, "data", "trend_wide.csv")
+        if os.path.exists(trend_csv):
+            if st.button("▶️ Run Data Validation Agent on data/trend_wide.csv"):
+                with st.spinner("Processing 161,340 rows across 115 sensor parameters..."):
+                    df_trend = pd.read_csv(trend_csv)
+                    annotated_df, report_df = validate_data(df_trend)
+                    
+                st.success("Validation complete!")
+                st.markdown("##### 📊 Per-Column Artifact Breakdown Report")
+                st.dataframe(report_df, use_container_width=True)
+        else:
+            st.warning("data/trend_wide.csv not found.")
+            
+    with tab3:
+        st.markdown("#### 📉 Empirical Reset Evidence Gallery (`data/reset_evidence.csv`)")
+        st.info("Empirical evidence collected in Step 1 confirming counter and meter reset artifacts across long-history chiller 1657 and chiller 2761.")
+        
+        ev_csv = os.path.join(REPO_ROOT, "data", "reset_evidence.csv")
+        if os.path.exists(ev_csv):
+            ev_df = pd.read_csv(ev_csv)
+            st.dataframe(ev_df, use_container_width=True)
+        else:
+            st.warning("data/reset_evidence.csv not found.")
+
