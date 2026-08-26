@@ -557,11 +557,22 @@ elif page == "📈 5. Architecture & Settled Baseline":
 # PAGE 6: LIVE KNOWLEDGE STORE & DATA VALIDATION
 # ----------------------------------------------------------------------------------------------------
 elif page == "🧠 6. Live Knowledge Store & Data Validation":
-    st.markdown("### 🧠 Live Fleet Knowledge Store & Artifact-Aware Data Validation")
+    st.markdown("### 🧠 Live Fleet Knowledge Store & Data Validation Control Center")
     st.caption("Live agent-editable JSON knowledge store (`chiller_agent_knowledge.json`) + multi-layer artifact-aware Data Validation Agent.")
     
+    import importlib
     import knowledge_store
-    from agents.data_validation import validate as validate_data
+    import agents.data_validation
+    importlib.reload(agents.data_validation)
+    validate_data = agents.data_validation.validate
+    BOUND_RULES = agents.data_validation.BOUND_RULES
+    
+    # Invalidate session state cache if BOUND_RULES changed
+    rules_hash = hash(str(BOUND_RULES))
+    if st.session_state.get("bound_rules_hash") != rules_hash:
+        st.session_state["bound_rules_hash"] = rules_hash
+        st.session_state.pop("val_report_df", None)
+        st.session_state.pop("val_annotated_df", None)
     
     kb_data = knowledge_store.load()
     inventory = kb_data.get("chiller_inventory", {}).get("entries", {})
@@ -577,24 +588,316 @@ elif page == "🧠 6. Live Knowledge Store & Data Validation":
     with c3:
         st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(learned_patterns)}</div><div class='metric-lbl'>Active Learned Patterns</div></div>", unsafe_allow_html=True)
     with c4:
-        st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(sentinels)}</div><div class='metric-lbl'>Sentinel Values ({sentinels[:3]}...)</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(sentinels)}</div><div class='metric-lbl'>BMS Sentinel Values</div></div>", unsafe_allow_html=True)
         
     st.markdown("<br>", unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs([
-        "📖 Live Knowledge Store Explorer",
-        "🛡️ Artifact-Aware Data Validation Runner",
-        "📉 Empirical Reset Evidence Gallery"
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔬 1. Pipeline Architecture & Examples",
+        "🛡️ 2. Live Validation Evaluator",
+        "📈 3. Fault Window & Ramp Inspector",
+        "🧠 4. Live Knowledge Store & Sync",
+        "📉 5. Empirical Reset Evidence Gallery"
     ])
     
+    # ------------------------------------------------------------------------------------------------
+    # SUB-TAB 1: PIPELINE ARCHITECTURE & EXAMPLES
+    # ------------------------------------------------------------------------------------------------
     with tab1:
-        st.markdown("#### 📖 Live Prompt Context Bundle (`get_agent_context()`)")
-        st.info("This compact bundle is dynamically injected into agent prompts at runtime so agents have live fleet context (chillers known, active learned patterns, sentinel rules).")
+        st.markdown("#### 🔬 4-Pass Multi-Layer Data Validation Architecture")
+        st.info("The Data Validation Agent is **read-only on source telemetry**. It never drops or alters raw sensor readings. For every numerical sensor column (e.g. `Ambient_Temperature`), it attaches **3 companion metadata columns**: `<col>_artifact_type`, `<col>_fault_window_id`, and `<col>_evidence`.")
         
+        col_pass1, col_pass2 = st.columns(2)
+        with col_pass1:
+            st.markdown("""
+            <div class='metric-card' style='text-align: left; margin-bottom: 16px;'>
+                <h4 style='color: #38bdf8; margin-top: 0;'>Pass 1: Vectorized Monotonic Ramp-Reset Window Detection</h4>
+                <p><b>Target:</b> Linear sensor drift or counter roll-overs terminating in a single-step drop back to normal bounds.</p>
+                <p><b>Logic:</b> Traces backward up to 50 samples from drop recovery point to locate ramp start; groups the entire window under ONE fault window ID (e.g., <code>fw-ramp-8a1f2b</code>).</p>
+                <p><b>Artifact Type:</b> <code>ramp_reset</code></p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+
+            
+        with col_pass2:
+            st.markdown("""
+            <div class='metric-card' style='text-align: left; margin-bottom: 16px;'>
+                <h4 style='color: #f43f5e; margin-top: 0;'>Pass 2: Layer 1 Domain Physical Bounds Gate</h4>
+                <p><b>Target:</b> Instantaneous, isolated physical impossibility breaches not part of a ramp window.</p>
+                <p><b>Logic:</b> Checks domain limits (e.g., Temperature -20°C to 60°C, Power -10 to 5000 kW, Flow -10 to 5000 m³/h).</p>
+                <p><b>Artifact Type:</b> <code>physical_bound</code></p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("""
+            <div class='metric-card' style='text-align: left;'>
+                <h4 style='color: #a78bfa; margin-top: 0;'>Pass 4: BMS / OPC Sentinel Clamping Gate</h4>
+                <p><b>Target:</b> BMS/OPC exact placeholder/dead values indicating register overflow or sensor disconnect.</p>
+                <p><b>Logic:</b> Exact match against <code>validation_rules.sentinel_values.values</code> (e.g., 0, -1, 9999, 10000, 65535, -999).</p>
+                <p><b>Artifact Type:</b> <code>sentinel</code></p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### 📋 Pass-by-Pass Numerical Execution Example")
+        st.markdown("Below is a concrete example showing raw incoming telemetry for `Ambient_Temperature` on Chiller 1657 across 6 timestamps and how companion metadata columns are populated:")
+        
+        example_df = pd.DataFrame({
+            "Timestamp": ["10:00", "10:15", "10:30", "10:45", "11:00", "11:15"],
+            "Ambient_Temperature": [24.5, 45.0, 120.0, 450.0, 731.4, 25.1],
+            "Ambient_Temperature_artifact_type": ["none", "ramp_reset", "ramp_reset", "ramp_reset", "ramp_reset", "none"],
+            "Ambient_Temperature_fault_window_id": [None, "fw-ramp-8a1f2b", "fw-ramp-8a1f2b", "fw-ramp-8a1f2b", "fw-ramp-8a1f2b", None],
+            "Ambient_Temperature_evidence": [
+                "",
+                "Monotonic ramp-reset window: peak 731.40 -> drop to 25.10",
+                "Monotonic ramp-reset window: peak 731.40 -> drop to 25.10",
+                "Monotonic ramp-reset window: peak 731.40 -> drop to 25.10",
+                "Monotonic ramp-reset window: peak 731.40 -> drop to 25.10",
+                ""
+            ]
+        })
+        st.dataframe(example_df, use_container_width=True)
+        
+        st.markdown("#### 📐 Layer 1 Domain Physical Bound Rules Reference (`BOUND_RULES`)")
+        bound_rows = []
+        for keywords, lo, hi, label in BOUND_RULES:
+            bound_rows.append({
+                "Rule Label": label,
+                "Keywords Matched": ", ".join(keywords),
+                "Min Bound": lo,
+                "Max Bound": hi
+            })
+        st.dataframe(pd.DataFrame(bound_rows), use_container_width=True)
+
+    # ------------------------------------------------------------------------------------------------
+    # SUB-TAB 2: LIVE VALIDATION EVALUATOR
+    # ------------------------------------------------------------------------------------------------
+    with tab2:
+        st.markdown("#### 🛡️ Artifact-Aware Data Validation Agent Evaluator")
+        st.caption("Executes `agents/data_validation.py` applying monotonic ramp-reset tracking and physical domain bounds.")
+        
+        trend_csv = os.path.join(REPO_ROOT, "data", "trend_wide.csv")
+        
+        col_run1, col_run2 = st.columns([2, 1])
+        with col_run1:
+            st.info(f"Target Dataset: `{trend_csv}` (161,340 rows × 115 sensor parameters)")
+        with col_run2:
+            run_btn = st.button("▶️ Execute Data Validation Agent", use_container_width=True, type="primary")
+            
+        if run_btn or "val_report_df" in st.session_state:
+            if run_btn:
+                if os.path.exists(trend_csv):
+                    with st.spinner("Executing 4-layer validation pipeline on 161,340 rows..."):
+                        df_trend = pd.read_csv(trend_csv)
+                        annotated_df, report_df = validate_data(df_trend)
+                        st.session_state["val_annotated_df"] = annotated_df
+                        st.session_state["val_report_df"] = report_df
+                    st.success("Validation complete! Results cached in session.")
+                else:
+                    st.error("data/trend_wide.csv not found.")
+                    
+            if "val_report_df" in st.session_state:
+                report_df = st.session_state["val_report_df"]
+                annotated_df = st.session_state["val_annotated_df"]
+                
+                tot_readings = report_df["n_total"].sum()
+                tot_flagged = report_df["n_flagged"].sum()
+                tot_ramps = report_df["ramp_resets"].sum()
+                tot_phys = report_df["physical_bounds"].sum()
+                m1, m2, m3, m4 = st.columns(4)
+                with m1:
+                    st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(report_df)}</div><div class='metric-lbl'>Validated Sensors</div></div>", unsafe_allow_html=True)
+                with m2:
+                    st.markdown(f"<div class='metric-card'><div class='metric-val'>{tot_flagged:,}</div><div class='metric-lbl'>Flagged Artifacts</div></div>", unsafe_allow_html=True)
+                with m3:
+                    st.markdown(f"<div class='metric-card'><div class='metric-val'>{tot_ramps:,}</div><div class='metric-lbl'>Ramp Resets</div></div>", unsafe_allow_html=True)
+                with m4:
+                    st.markdown(f"<div class='metric-card'><div class='metric-val'>{tot_phys:,}</div><div class='metric-lbl'>Physical Breaches</div></div>", unsafe_allow_html=True)
+                    
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown("##### 📊 Per-Column Artifact Breakdown Report")
+                
+                search_term = st.text_input("🔍 Filter parameters by name:", "")
+                filtered_report = report_df if not search_term else report_df[report_df["column"].str.contains(search_term, case=False, na=False)]
+                st.dataframe(filtered_report, use_container_width=True)
+                
+                st.markdown("##### 👁️ Annotated Dataset Preview (Raw Telemetry + Companion Columns)")
+                st.caption("Select a sensor parameter to inspect its raw values alongside companion artifact tags, fault window IDs, and evidence rationales.")
+                
+                col_prev1, col_prev2 = st.columns([1, 1])
+                with col_prev1:
+                    preview_sensor = st.selectbox("🎯 Select Sensor Parameter for Preview:", report_df["column"].tolist(), index=0)
+                with col_prev2:
+                    preview_mode = st.radio("Rows to Display:", ["🚨 Flagged Artifact Rows First", "📋 Top 50 Telemetry Rows"], horizontal=True)
+                    
+                preview_cols = ["timestamp", "machineId"] if "timestamp" in annotated_df.columns and "machineId" in annotated_df.columns else []
+                art_col = f"{preview_sensor}_artifact_type"
+                win_col = f"{preview_sensor}_fault_window_id"
+                ev_col = f"{preview_sensor}_evidence"
+                
+                sensor_meta_cols = [preview_sensor, art_col, win_col, ev_col]
+                available_cols = [c for c in preview_cols + sensor_meta_cols if c in annotated_df.columns]
+                
+                if preview_mode == "🚨 Flagged Artifact Rows First":
+                    flagged_mask = annotated_df[art_col] != "none" if art_col in annotated_df.columns else pd.Series(False, index=annotated_df.index)
+                    if flagged_mask.any():
+                        preview_df = annotated_df[flagged_mask][available_cols].head(50)
+                        st.dataframe(preview_df, use_container_width=True)
+                    else:
+                        st.info(f"No artifact breaches found for '{preview_sensor}'. Displaying top telemetry rows:")
+                        st.dataframe(annotated_df[available_cols].head(50), use_container_width=True)
+                else:
+                    st.dataframe(annotated_df[available_cols].head(50), use_container_width=True)
+
+    # ------------------------------------------------------------------------------------------------
+    # SUB-TAB 3: FAULT WINDOW & RAMP INSPECTOR
+    # ------------------------------------------------------------------------------------------------
+    with tab3:
+        st.markdown("#### 📈 Interactive Ramp-Reset & Fault Window Visualizer")
+        st.caption("Select a sensor parameter and filter by Chiller (`machineId`) to inspect raw readings, flagged ramp-reset windows, physical bound lines, and statistical bounds in real time.")
+        
+        if "val_annotated_df" not in st.session_state:
+            st.warning("Please click 'Execute Data Validation Agent' in Sub-Tab 2 to run the pipeline and generate full time-series visualizations.")
+            trend_csv = os.path.join(REPO_ROOT, "data", "trend_wide.csv")
+            if os.path.exists(trend_csv) and st.button("▶️ Run Quick Validation for Visualizer"):
+                df_trend = pd.read_csv(trend_csv)
+                annotated_df, report_df = validate_data(df_trend)
+                st.session_state["val_annotated_df"] = annotated_df
+                st.session_state["val_report_df"] = report_df
+                st.rerun()
+        else:
+            annotated_df = st.session_state["val_annotated_df"]
+            report_df = st.session_state["val_report_df"]
+            
+            col_sel1, col_sel2 = st.columns([1, 1])
+            with col_sel1:
+                value_cols = report_df["column"].tolist()
+                selected_col = st.selectbox("🎯 Select Sensor Parameter to Inspect:", value_cols, index=0)
+            with col_sel2:
+                available_mids = sorted([str(m) for m in annotated_df["machineId"].unique()]) if "machineId" in annotated_df.columns else []
+                selected_mid = st.selectbox("🏢 Select Chiller (machineId):", ["All Chillers"] + available_mids, index=0)
+            
+            row_info = report_df[report_df["column"] == selected_col].iloc[0]
+            
+            art_type_col = f"{selected_col}_artifact_type"
+            window_col = f"{selected_col}_fault_window_id"
+            evidence_col = f"{selected_col}_evidence"
+            
+            select_cols = ["timestamp", "machineId", selected_col, art_type_col, window_col, evidence_col]
+            available_select_cols = [c for c in select_cols if c in annotated_df.columns]
+            
+            df_plot = annotated_df[available_select_cols].dropna(subset=[selected_col])
+            
+            if selected_mid != "All Chillers" and "machineId" in df_plot.columns:
+                df_plot = df_plot[df_plot["machineId"].astype(str) == str(selected_mid)]
+                
+            df_plot = df_plot.head(3000)
+            
+            c_info1, c_info2, c_info3, c_info4 = st.columns(4)
+            with c_info1:
+                st.markdown(f"**Chiller Scope:** `{selected_mid}`")
+            with c_info2:
+                st.markdown(f"**Rule Matched:** `{row_info['rule']}`")
+            with c_info3:
+                st.markdown(f"**Physical Bounds:** `[{row_info['bound_min']}, {row_info['bound_max']}]`")
+            with c_info4:
+                st.markdown(f"**Sample Count:** `{len(df_plot):,} readings`")
+                
+            if "timestamp" in df_plot.columns:
+                df_plot["timestamp"] = pd.to_datetime(df_plot["timestamp"])
+                df_plot = df_plot.sort_values("timestamp")
+                x_vals = df_plot["timestamp"]
+            else:
+                x_vals = df_plot.index
+                
+            fig = gg.Figure()
+            
+            df_plot["hover_text"] = df_plot.apply(
+                lambda r: (
+                    f"Chiller ID: {r.get('machineId', 'N/A')}<br>"
+                    f"Timestamp: {r.get('timestamp', '')}<br>"
+                    f"Value: {r[selected_col]:.2f}<br>"
+                    f"Artifact Type: {r.get(art_type_col, 'none')}<br>"
+                    f"Fault Window: {r.get(window_col, 'N/A')}<br>"
+                    f"Evidence: {r.get(evidence_col, 'None')}"
+                ),
+                axis=1
+            )
+            
+            # Clean Telemetry
+            normal_mask = df_plot[art_type_col] == "none"
+            if normal_mask.any():
+                fig.add_trace(gg.Scatter(
+                    x=x_vals[normal_mask],
+                    y=df_plot[selected_col][normal_mask],
+                    mode="markers+lines",
+                    name="Clean Telemetry",
+                    marker=dict(color="#38bdf8", size=4),
+                    line=dict(color="rgba(56, 189, 248, 0.4)", width=1),
+                    text=df_plot["hover_text"][normal_mask],
+                    hoverinfo="text"
+                ))
+                
+            # Ramp Reset Artifacts
+            ramp_mask = df_plot[art_type_col] == "ramp_reset"
+            if ramp_mask.any():
+                fig.add_trace(gg.Scatter(
+                    x=x_vals[ramp_mask],
+                    y=df_plot[selected_col][ramp_mask],
+                    mode="markers",
+                    name="Ramp-Reset Artifact Window",
+                    marker=dict(color="#f43f5e", size=8, symbol="diamond"),
+                    text=df_plot["hover_text"][ramp_mask],
+                    hoverinfo="text"
+                ))
+                
+            # Physical Bound Breaches
+            phys_mask = df_plot[art_type_col] == "physical_bound"
+            if phys_mask.any():
+                fig.add_trace(gg.Scatter(
+                    x=x_vals[phys_mask],
+                    y=df_plot[selected_col][phys_mask],
+                    mode="markers",
+                    name="Physical Bound Breach",
+                    marker=dict(color="#a855f7", size=9, symbol="x"),
+                    text=df_plot["hover_text"][phys_mask],
+                    hoverinfo="text"
+                ))
+                
+
+                
+            # Bound Reference Lines
+            if pd.notna(row_info['bound_min']):
+                fig.add_hline(y=row_info['bound_min'], line_dash="dash", line_color="#ef4444", annotation_text=f"Min Bound ({row_info['bound_min']})")
+            if pd.notna(row_info['bound_max']):
+                fig.add_hline(y=row_info['bound_max'], line_dash="dash", line_color="#ef4444", annotation_text=f"Max Bound ({row_info['bound_max']})")
+                
+            fig.update_layout(
+                title=f"Telemetry Inspection for '{selected_col}' — Chiller Scope: [{selected_mid}]",
+                xaxis_title="Timestamp",
+                yaxis_title=f"{selected_col} Value",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(15,23,42,0.6)",
+                font_color="#f3f4f6",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ------------------------------------------------------------------------------------------------
+    # SUB-TAB 4: LIVE KNOWLEDGE STORE & SYNC
+    # ------------------------------------------------------------------------------------------------
+    with tab4:
+        st.markdown("#### 🧠 Live Knowledge Store Explorer & Real-Time Sync")
+        st.caption("Inspect live contents of `chiller_agent_knowledge.json` and test atomic pattern logging via `knowledge_store.py`.")
+        
+        st.markdown("##### 📖 Live Prompt Context Bundle (`get_agent_context()`)")
+        st.info("This compact context bundle is dynamically generated from `chiller_agent_knowledge.json` and injected into LLM agent prompts at runtime.")
         ctx_str = knowledge_store.get_agent_context()
         st.code(ctx_str, language="markdown")
         
-        st.markdown("#### 🏢 Chiller Inventory Registry")
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("##### 🏢 Chiller Inventory Registry")
         inv_rows = []
         for mid, rec in inventory.items():
             inv_rows.append({
@@ -603,37 +906,68 @@ elif page == "🧠 6. Live Knowledge Store & Data Validation":
                 "Type": rec.get("chiller_type"),
                 "Criticality": rec.get("criticality"),
                 "Industry": rec.get("industry"),
-                "Confidence": rec.get("confidence"),
-                "Aliases": ", ".join(rec.get("aliases", [])) if rec.get("aliases") else "None",
+                "Confidence Score": rec.get("confidence"),
+                "Asset Aliases": ", ".join(rec.get("aliases", [])) if rec.get("aliases") else "None",
                 "Tracked Parameters": len(rec.get("parameters_tracked", {}))
             })
         st.dataframe(pd.DataFrame(inv_rows), use_container_width=True)
         
-    with tab2:
-        st.markdown("#### 🛡️ Artifact-Aware Data Validation Agent Evaluator")
-        st.caption("Executes `agents/data_validation.py` applying sentinel checks, monotonic ramp-reset tracking, physical bounds, and Layer-2 statistical bounds.")
-        
-        trend_csv = os.path.join(REPO_ROOT, "data", "trend_wide.csv")
-        if os.path.exists(trend_csv):
-            if st.button("▶️ Run Data Validation Agent on data/trend_wide.csv"):
-                with st.spinner("Processing 161,340 rows across 115 sensor parameters..."):
-                    df_trend = pd.read_csv(trend_csv)
-                    annotated_df, report_df = validate_data(df_trend)
-                    
-                st.success("Validation complete!")
-                st.markdown("##### 📊 Per-Column Artifact Breakdown Report")
-                st.dataframe(report_df, use_container_width=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("##### 🔍 Active Learned Patterns Log (`learned_patterns`)")
+        if learned_patterns:
+            lp_df = pd.DataFrame(learned_patterns)
+            st.dataframe(lp_df, use_container_width=True)
         else:
-            st.warning("data/trend_wide.csv not found.")
+            st.info("No active learned patterns recorded yet.")
             
-    with tab3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("##### 🧪 Test Live Atomic Pattern Logging (`add_learned_pattern`)")
+        with st.form("add_pattern_form"):
+            st.markdown("Simulate discovering a new data quality pattern during live validation and saving it atomically into `chiller_agent_knowledge.json`:")
+            f_pat = st.text_input("Pattern Name", "monotonic_ramp_then_reset")
+            f_mid = st.text_input("Machine ID", "1657")
+            f_param = st.text_input("Parameter Name", "Ambient_Temperature ValueY")
+            f_desc = st.text_input("Description", "Unphysical ambient temperature ramp to 731.4°C followed by single-step reset")
+            f_rule = st.text_input("Validation Rule", "Classify ramp window as ONE fault event; treat single-step drop as recovery point.")
+            f_evid = st.text_input("Evidence Rationale", "Monotonic ramp-reset window: peak 731.40 -> drop to 25.10")
+            
+            submit_pat = st.form_submit_button("💾 Save Pattern Atomically to Knowledge Store")
+            if submit_pat:
+                entry = knowledge_store.add_learned_pattern(
+                    pattern=f_pat,
+                    description=f_desc,
+                    rule=f_rule,
+                    machine_id=f_mid,
+                    parameter=f_param,
+                    evidence=f_evid
+                )
+                st.success(f"Pattern successfully recorded with ID: `{entry['id']}`! Reloading store...")
+                st.rerun()
+
+    # ------------------------------------------------------------------------------------------------
+    # SUB-TAB 5: EMPIRICAL RESET EVIDENCE GALLERY
+    # ------------------------------------------------------------------------------------------------
+    with tab5:
         st.markdown("#### 📉 Empirical Reset Evidence Gallery (`data/reset_evidence.csv`)")
-        st.info("Empirical evidence collected in Step 1 confirming counter and meter reset artifacts across long-history chiller 1657 and chiller 2761.")
+        st.info("Empirical evidence collected in Step 1 confirming counter and meter reset artifacts across long-history chiller 1657 and chiller 2761 in the restored fleet database.")
         
         ev_csv = os.path.join(REPO_ROOT, "data", "reset_evidence.csv")
         if os.path.exists(ev_csv):
             ev_df = pd.read_csv(ev_csv)
+            param_col = "parameter" if "parameter" in ev_df.columns else ("column" if "column" in ev_df.columns else ev_df.columns[0])
+            m_col = "machine_id" if "machine_id" in ev_df.columns else ("machineId" if "machineId" in ev_df.columns else ev_df.columns[0])
+            
+            c_ev1, c_ev2, c_ev3 = st.columns(3)
+            with c_ev1:
+                st.markdown(f"<div class='metric-card'><div class='metric-val'>{len(ev_df)}</div><div class='metric-lbl'>Confirmed Evidence Events</div></div>", unsafe_allow_html=True)
+            with c_ev2:
+                st.markdown(f"<div class='metric-card'><div class='metric-val'>{ev_df[m_col].nunique()}</div><div class='metric-lbl'>Affected Chillers</div></div>", unsafe_allow_html=True)
+            with c_ev3:
+                st.markdown(f"<div class='metric-card'><div class='metric-val'>{ev_df[param_col].nunique()}</div><div class='metric-lbl'>Affected Parameters</div></div>", unsafe_allow_html=True)
+                
+            st.markdown("<br>", unsafe_allow_html=True)
             st.dataframe(ev_df, use_container_width=True)
         else:
             st.warning("data/reset_evidence.csv not found.")
+
 

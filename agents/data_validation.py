@@ -29,28 +29,48 @@ import knowledge_store
 METADATA_COLUMNS = {"machineId", "timestamp", "status", "Criticality"}
 
 BOUND_RULES = [
-    (["status", "alarm", "fault", "trip"], 0.0, 1.0, "duty_cycle_status"),
-    (["percent", "%", "deviation", "load", "performance"], -10.0, 110.0, "percentage"),
+    # 1. Chiller Efficiency Performance Index (ikW/TR, kW/Ton)
+    (["ikw/tr", "ikw_tr", "kw/tr", "kw/ton"], 0.0, 10.0, "chiller_efficiency_ikw_tr"),
+    # 2. Cumulative Energy Consumption (kWh, MWh)
+    (["(kwh)", "kwh", "mwh", "energy_consumption", "cumulative_energy"], 0.0, 10000000.0, "cumulative_energy_kwh"),
+    # 3. Facility & IT Electrical Load (kW, MW)
+    (["facility_load", "it_load", "building_load", "plant_load", "total_facility", "total_load"], 0.0, 100000.0, "facility_it_load_kw"),
+    # 4. Performance Deviation %
+    (["performance deviation", "deviation (%)", "deviation_pct", "dev_pct"], -100.0, 100.0, "performance_deviation_pct"),
+    # 5. BMS Alarm / Fault / Trip Status Codes
+    (["trip status", "alarm_status", "common_alarm", "fault_status", "fault_code", "alarm_code"], 0.0, 65535.0, "bms_alarm_code"),
+    (["on_off", "auto_manual", "run_status", "status"], 0.0, 1.0, "binary_status"),
+    # 6. Run Hours
     (["hours", "runhours"], 0.0, 200000.0, "cumulative_hours"),
-    (["temperature", "temp", "wet bulb", "cwet"], -20.0, 60.0, "temperature"),
-    (["pressure", "press"], -50.0, 500.0, "pressure"),
-    (["flow"], -10.0, 5000.0, "flow"),
-    (["speed"], -10.0, 110.0, "speed_pct"),
-    (["kw", "power", "ikw"], -10.0, 5000.0, "power"),
+    # 7. Temperature & Delta T
+    (["temperature", "temp", "wet bulb", "cwet", "deg c", "degc", "delta t", "delta_t", "delta"], -20.0, 60.0, "temperature"),
+    # 8. Fan / Pump Speed & Frequency (placed before pressure to avoid any collision)
+    (["speed", "frequency", "rpm"], -10.0, 5000.0, "speed"),
+    # 9. Refrigerant & Hydraulic Pressure (requires 'press', 'lp_value', 'hp_value', 'psi', 'bar')
+    (["press", "lp_value", "hp_value", "psi", "bar"], -50.0, 2000.0, "pressure"),
+    # 10. Flow Rate
+    (["flow", "m3/h", "gpm"], -10.0, 5000.0, "flow"),
+    # 11. Cooling Capacity Tonnage (TR)
+    (["calculated (tr)", "calculated(tr)", "calculated tr", "rounded (tr)", "rounded(tr)", "rounded tr", "cooling_capacity", "tonnage"], 0.0, 5000.0, "cooling_capacity_tr"),
+    # 12. Percentage / Compressor Load
+    (["percent", "%", "load", "performance"], -10.0, 110.0, "percentage_load"),
+    # 13. Instantaneous Electrical Power (kW, iKW)
+    (["kw", "power", "ikw"], -10.0, 5000.0, "instantaneous_power_kw"),
+    # 14. Temperature Setpoints
     (["setpoint"], -20.0, 60.0, "setpoint_temperature"),
 ]
 
-STATISTICAL_FALLBACK_SIGMA = 6
 
 
 def infer_bounds(column_name):
     """Return (min, max, rule_label) for a column name, or a statistical fallback."""
     name_lower = column_name.lower()
-    name_check = name_lower.replace("compressor", "comp")
+    # Replace 'compressor' with 'comp' to prevent 'press' inside 'comPRESSor' from matching pressure
+    name_clean = name_lower.replace("compressor", "comp")
     for keywords, lo, hi, label in BOUND_RULES:
-        if any(kw in name_check for kw in keywords):
+        if any(kw in name_clean for kw in keywords):
             return lo, hi, label
-    return None, None, "statistical_fallback"
+    return None, None, "unmapped"
 
 
 def get_validation_agent_prompt(df: pd.DataFrame = None) -> str:
@@ -81,7 +101,10 @@ def validate(df: pd.DataFrame):
     cluster_entries = kb_data.get("cluster_registry", {}).get("entries", {})
 
     value_columns = [
-        c for c in df.columns if c not in METADATA_COLUMNS and pd.api.types.is_numeric_dtype(df[c])
+        c for c in df.columns
+        if c not in METADATA_COLUMNS
+        and pd.api.types.is_numeric_dtype(df[c])
+        and df[c].notna().sum() > 0
     ]
 
     companion_cols = {}
@@ -100,76 +123,52 @@ def validate(df: pd.DataFrame):
         vals = series.values
         lo, hi, rule = infer_bounds(col)
 
-        if rule == "statistical_fallback":
-            mean = series.mean()
-            std = series.std()
-            lo = mean - STATISTICAL_FALLBACK_SIGMA * std if pd.notna(mean) else -9999
-            hi = mean + STATISTICAL_FALLBACK_SIGMA * std if pd.notna(mean) else 9999
-
         art_types = np.array(["none"] * len(df), dtype=object)
         window_ids = np.array([None] * len(df), dtype=object)
         evidences = np.array([""] * len(df), dtype=object)
 
-        # 1. Sentinel Value Check
-        for sentinel in sentinel_vals:
-            if sentinel == 0:
-                if any(kw in col.lower() for kw in ["kw", "flow", "speed", "power", "load"]):
-                    is_z = (vals == 0)
-                    flat4 = is_z & np.roll(is_z, 1) & np.roll(is_z, 2) & np.roll(is_z, 3)
-                    idx_sent = np.where(flat4)[0]
-                    art_types[idx_sent] = "sentinel"
-                    evidences[idx_sent] = "Sustained zero flatline on dynamic parameter"
-            else:
-                sent_mask = np.isclose(vals, sentinel, atol=0.01, equal_nan=False)
-                idx_sent = np.where(sent_mask)[0]
-                art_types[idx_sent] = "sentinel"
-                evidences[idx_sent] = f"Exact sentinel value match ({sentinel})"
+        # (Pass 1 Sentinel check removed per user request: exact sentinel values are unverified)
 
-        # 2. Vectorized Monotonic Ramp-then-Reset Detection
-        if len(df) > 5:
-            v_curr = vals[:-1]
-            v_next = vals[1:]
-            
-            drop_indices = np.where((art_types[:-1] == "none") & 
-                                    ((v_curr > hi) | (v_curr < lo)) & 
-                                    (v_next >= lo) & (v_next <= hi))[0]
-
-            for drop_idx in drop_indices:
-                v_c = vals[drop_idx]
-                v_n = vals[drop_idx + 1]
+        if rule != "unmapped":
+            # 2. Vectorized Monotonic Ramp-then-Reset Detection (Per Machine Scope)
+            if len(df) > 5:
+                mids = df["machineId"].astype(str).values if "machineId" in df.columns else np.array(["unknown"] * len(df))
+                v_curr = vals[:-1]
+                v_next = vals[1:]
+                m_curr = mids[:-1]
+                m_next = mids[1:]
                 
-                ramp_start = max(0, drop_idx - 10)
-                for j in range(drop_idx - 1, max(0, drop_idx - 50), -1):
-                    if pd.notna(vals[j]) and (lo <= vals[j] <= hi):
+                drop_indices = np.where((art_types[:-1] == "none") & 
+                                        (m_curr == m_next) &
+                                        ((v_curr > hi) | (v_curr < lo)) & 
+                                        (v_next >= lo) & (v_next <= hi))[0]
+
+                for drop_idx in drop_indices:
+                    target_mid = mids[drop_idx]
+                    v_c = vals[drop_idx]
+                    v_n = vals[drop_idx + 1]
+                    
+                    ramp_start = drop_idx
+                    for j in range(drop_idx - 1, max(-1, drop_idx - 50), -1):
+                        if mids[j] != target_mid:
+                            break
                         ramp_start = j
-                        break
+                        if pd.notna(vals[j]) and (lo <= vals[j] <= hi):
+                            break
 
-                f_window = f"fw-ramp-{uuid.uuid4().hex[:6]}"
-                evidence_str = f"Monotonic ramp-reset window: peak {v_c:.2f} -> drop to {v_n:.2f}"
+                    f_window = f"fw-ramp-{uuid.uuid4().hex[:6]}"
+                    evidence_str = f"Monotonic ramp-reset window: peak {v_c:.2f} -> drop to {v_n:.2f}"
 
-                art_types[ramp_start:drop_idx + 1] = "ramp_reset"
-                window_ids[ramp_start:drop_idx + 1] = f_window
-                evidences[ramp_start:drop_idx + 1] = evidence_str
+                    art_types[ramp_start:drop_idx + 1] = "ramp_reset"
+                    window_ids[ramp_start:drop_idx + 1] = f_window
+                    evidences[ramp_start:drop_idx + 1] = evidence_str
 
-        # 3. Layer 1 Physical Bound Check
-        phys_mask = ((vals < lo) | (vals > hi)) & (art_types == "none") & pd.notna(vals)
-        idx_phys = np.where(phys_mask)[0]
-        art_types[idx_phys] = "physical_bound"
-        for idx in idx_phys:
-            evidences[idx] = f"Physical bound breach (min: {lo}, max: {hi}, value: {vals[idx]:.2f})"
-
-        # 4. Vectorized Layer 2 Statistical Bound Check (per cluster)
-        if "machineId" in df.columns:
-            unassigned_mask = (art_types == "none") & pd.notna(vals)
-            for cid, centry in cluster_entries.items():
-                sbounds = centry.get("stat_bounds", {}).get(col)
-                if sbounds:
-                    p1, p99 = sbounds["p1"], sbounds["p99"]
-                    c_mask = unassigned_mask & (df_clusters == cid) & ((vals < p1) | (vals > p99))
-                    idx_stat = np.where(c_mask)[0]
-                    art_types[idx_stat] = "statistical_bound"
-                    for idx in idx_stat:
-                        evidences[idx] = f"Layer-2 statistical bound breach (cluster {cid} p1: {p1}, p99: {p99}, value: {vals[idx]:.2f})"
+            # 3. Layer 1 Physical Bound Check
+            phys_mask = ((vals < lo) | (vals > hi)) & (art_types == "none") & pd.notna(vals)
+            idx_phys = np.where(phys_mask)[0]
+            art_types[idx_phys] = "physical_bound"
+            for idx in idx_phys:
+                evidences[idx] = f"Physical bound breach (min: {lo}, max: {hi}, value: {vals[idx]:.2f})"
 
         companion_cols[f"{col}_artifact_type"] = art_types
         companion_cols[f"{col}_fault_window_id"] = window_ids
@@ -187,10 +186,8 @@ def validate(df: pd.DataFrame):
             "n_total": n_total,
             "n_flagged": n_flagged,
             "pct_flagged": pct_flagged,
-            "sentinels": int((art_types == "sentinel").sum()),
             "ramp_resets": int((art_types == "ramp_reset").sum()),
             "physical_bounds": int((art_types == "physical_bound").sum()),
-            "statistical_bounds": int((art_types == "statistical_bound").sum()),
             "genuine_anomalies": int((art_types == "genuine_anomaly").sum()),
         })
 

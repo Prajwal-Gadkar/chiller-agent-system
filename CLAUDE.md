@@ -100,5 +100,5 @@ Instrumentation analysis across the fleet revealed two meaningful chiller groups
 - NEVER modify or delete rows in the source database.
 - NEVER hardcode secrets. Always load from environment variables (`.env`).
 - ALWAYS enforce per-chiller modeling (never pool chillers).
-- ALWAYS respect the 2026-01-01 regime boundary.
+
 
